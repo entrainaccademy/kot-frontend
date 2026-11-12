@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { usePOS } from "../../context/POSContext";
 import { Search, RefreshCw, Clock } from "lucide-react";
+import { SoundControl } from "../common/SoundControl";
 
 export const POSHeader: React.FC = () => {
   const { searchQuery, setSearchQuery, loadMenu, loadingMenu, selectedTable, orderType } = usePOS();
@@ -76,8 +77,10 @@ export const POSHeader: React.FC = () => {
         )}
       </div>
 
-      {/* Right Controls: Clock & Refresh */}
-      <div className="flex items-center gap-3">
+      {/* Right Controls: Sound, Clock & Refresh */}
+      <div className="flex items-center gap-2.5">
+        <SoundControl />
+
         <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-500 bg-slate-100/70 px-3 py-1.5 rounded-lg border border-slate-200/50">
           <Clock className="w-3.5 h-3.5 text-slate-400" />
           <span suppressHydrationWarning className="font-mono font-medium">{currentTime || "--:--:--"}</span>
@@ -87,7 +90,7 @@ export const POSHeader: React.FC = () => {
           onClick={() => loadMenu()}
           disabled={loadingMenu}
           title="Refresh Menu Items"
-          className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors disabled:opacity-50"
+          className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors disabled:opacity-50 cursor-pointer"
         >
           <RefreshCw className={`w-4 h-4 ${loadingMenu ? "animate-spin text-teal-600" : ""}`} />
         </button>

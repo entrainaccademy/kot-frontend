@@ -28,7 +28,11 @@ import {
   FileText,
   Sun,
   Moon,
+  Bell,
+  Volume2,
 } from "lucide-react";
+import { soundService } from "../../../lib/soundService";
+import { SoundControl } from "../../../components/common/SoundControl";
 
 export default function KitchenDisplayPage() {
   const { user } = useAuth();
@@ -40,6 +44,27 @@ export default function KitchenDisplayPage() {
   
   // Theme state: defaults to 'light' per user request, with option to toggle
   const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
+  const [highlightedTicketIds, setHighlightedTicketIds] = useState<Set<string>>(new Set());
+  const [audioUnlocked, setAudioUnlocked] = useState<boolean>(false);
+  const initialLoadRef = React.useRef<boolean>(false);
+
+  useEffect(() => {
+    const checkAudio = () => {
+      if (soundService.isAudioUnlocked()) {
+        setAudioUnlocked(true);
+      }
+    };
+    checkAudio();
+    const handleGesture = () => {
+      soundService.unlockAudio().then(() => setAudioUnlocked(true));
+    };
+    window.addEventListener("click", handleGesture, { once: true });
+    window.addEventListener("keydown", handleGesture, { once: true });
+    return () => {
+      window.removeEventListener("click", handleGesture);
+      window.removeEventListener("keydown", handleGesture);
+    };
+  }, []);
 
   // In-Screen Bill State (NO redirection to /restaurant/pos)
   const [activeBillInvoice, setActiveBillInvoice] = useState<any | null>(null);
@@ -84,6 +109,10 @@ export default function KitchenDisplayPage() {
       console.warn("Failed to load kitchen tickets:", err);
     } finally {
       setLoading(false);
+      // Mark initial load complete so sounds only trigger for real-time live orders
+      setTimeout(() => {
+        initialLoadRef.current = true;
+      }, 1000);
     }
   }, []);
 
@@ -98,13 +127,55 @@ export default function KitchenDisplayPage() {
       loadKitchenOrders();
     };
 
-    socket.on("order:created", handleUpdate);
+    // Kitchen Bell Notification for New Orders / KOTs
+    const handleKotCreated = (data: any) => {
+      loadKitchenOrders();
+
+      // Avoid playing sound during historical load on initial page load / refresh
+      if (!initialLoadRef.current) return;
+
+      const kotId = data.kot?._id || data.orderId || data.kot?.kotNumber || data.orderNumber || `${Date.now()}`;
+      const eventKey = `kot-created:${kotId}`;
+
+      // 1. Play realistic service bell "DING!"
+      soundService.playKitchenBell(eventKey);
+
+      // 2. Highlight new KOT card with glowing border
+      const targetOrderId = data.orderId || data.kot?.orderId || data.kot?._id;
+      if (targetOrderId) {
+        setHighlightedTicketIds((prev) => new Set(prev).add(targetOrderId));
+        setTimeout(() => {
+          setHighlightedTicketIds((prev) => {
+            const next = new Set(prev);
+            next.delete(targetOrderId);
+            return next;
+          });
+        }, 8000);
+      }
+
+      // 3. Visual notification
+      const orderNum = data.orderNumber || data.kot?.orderNumber || "New Order";
+      const tableInfo = data.tableNumber || data.kot?.tableNumber || "Kitchen Dispatch";
+      const itemsSummary = (data.items || data.kot?.items || [])
+        .slice(0, 3)
+        .map((i: any) => `${i.quantity}x ${i.name}`)
+        .join(", ");
+
+      showToast(
+        `🔔 New Kitchen Order – ${orderNum} (${tableInfo})${itemsSummary ? `: ${itemsSummary}` : ""}`,
+        "info"
+      );
+    };
+
+    socket.on("kot:created", handleKotCreated);
+    socket.on("order:created", handleKotCreated);
     socket.on("order:updated", handleUpdate);
     socket.on("kot:updated", handleUpdate);
     socket.on("kitchen:order-ready", handleUpdate);
 
     return () => {
-      socket.off("order:created", handleUpdate);
+      socket.off("kot:created", handleKotCreated);
+      socket.off("order:created", handleKotCreated);
       socket.off("order:updated", handleUpdate);
       socket.off("kot:updated", handleUpdate);
       socket.off("kitchen:order-ready", handleUpdate);
@@ -113,6 +184,14 @@ export default function KitchenDisplayPage() {
 
   // Update order status: PREPARING (Working) -> READY (Food Ready) -> SERVED -> COMPLETED
   const updateStatus = async (orderId: string, newStatus: string) => {
+    // Immediate audio feedback on button click
+    soundService.unlockAudio();
+    if (newStatus === "READY") {
+      soundService.playFoodReady();
+    } else {
+      soundService.playKitchenBell();
+    }
+
     setUpdatingId(orderId);
     try {
       const res = await apiClient.patch<{ success: boolean; data?: any }>(
@@ -366,58 +445,58 @@ export default function KitchenDisplayPage() {
   const billedCount = orders.filter((o) => o.status === "BILLED").length;
 
   return (
-    <div className="flex h-screen w-screen bg-slate-100 overflow-hidden font-sans">
+    <div className={`kds-minimal ${isDarkMode ? "kds-dark" : "kds-light"} flex h-screen w-screen bg-white overflow-hidden font-sans`}>
       <div className="hidden lg:block shrink-0">
         <POSSidebar activePath="/restaurant/kitchen" />
       </div>
 
       <main
-        className={`flex-1 flex flex-col min-w-0 h-full overflow-y-auto transition-colors duration-200 ${
+        className={`kds-board flex-1 flex flex-col min-w-0 h-full overflow-y-auto transition-colors duration-200 ${
           isDarkMode ? "bg-slate-900 text-white" : "bg-slate-50/80 text-slate-900"
         }`}
       >
-        {/* Header Bar */}
+        {/* Compact Header Bar */}
         <header
-          className={`h-16 px-6 flex items-center justify-between shrink-0 border-b transition-colors duration-200 ${
+          className={`h-13 px-4 sm:px-6 flex items-center justify-between shrink-0 border-b transition-colors duration-200 ${
             isDarkMode
               ? "bg-slate-950 border-slate-800"
               : "bg-white border-slate-200/90 shadow-2xs"
           }`}
         >
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <div
-              className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-colors ${
+              className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${
                 isDarkMode
                   ? "bg-teal-500/10 border border-teal-500/30 text-teal-400"
                   : "bg-teal-50 border border-teal-200 text-teal-700 shadow-2xs"
               }`}
             >
-              <ChefHat className="w-5 h-5" />
+              <ChefHat className="w-4 h-4" />
             </div>
             <div>
               <h1
-                className={`text-base font-extrabold tracking-tight flex items-center gap-2 ${
+                className={`text-sm font-extrabold tracking-tight flex items-center gap-1.5 ${
                   isDarkMode ? "text-white" : "text-slate-900"
                 }`}
               >
                 <span>Kitchen Display System (KDS)</span>
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              
               </h1>
               <p
-                className={`text-[11px] font-medium ${
+                className={`text-[10px] font-medium hidden sm:block ${
                   isDarkMode ? "text-slate-400" : "text-slate-500"
                 }`}
               >
-                {user?.restaurantName || "Cobolt Kitchen & Bar"} • Live Kitchen Expediter
+                {user?.restaurantName || "Cobolt Kitchen & Bar"} • Compact Kitchen Expediter
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             {/* Theme Toggle (Light / Dark) */}
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
-              className={`p-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              className={`py-1.5 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
                 isDarkMode
                   ? "border-slate-800 bg-slate-900 text-amber-300 hover:bg-slate-800"
                   : "border-slate-200 bg-slate-100/80 text-slate-700 hover:bg-slate-200"
@@ -426,56 +505,79 @@ export default function KitchenDisplayPage() {
             >
               {isDarkMode ? (
                 <>
-                  <Sun className="w-4 h-4 text-amber-400" />
-                  <span className="hidden sm:inline">Light Theme</span>
+                  <Sun className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden sm:inline text-[11px]">Light</span>
                 </>
               ) : (
                 <>
-                  <Moon className="w-4 h-4 text-indigo-600" />
-                  <span className="hidden sm:inline">Dark Theme</span>
+                  <Moon className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="hidden sm:inline text-[11px]">Dark</span>
                 </>
               )}
             </button>
 
+            {/* Notification Sound Control (Mute/Unmute & Volume) */}
+            <SoundControl />
+
             {/* Refresh Button */}
             <button
               onClick={loadKitchenOrders}
-              className={`py-2 px-3 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              className={`py-1.5 px-2.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
                 isDarkMode
                   ? "border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800"
                   : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 shadow-2xs"
               }`}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-teal-600" : ""}`} />
-              <span className="hidden sm:inline">Refresh</span>
+              <span className="hidden sm:inline text-[11px]">Refresh</span>
             </button>
 
             {/* POS Billing Link */}
             <Link
               href="/restaurant/pos"
-              className="py-2 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center gap-2 shadow-xs transition-all"
+              className="py-1.5 px-3 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all"
             >
-              <Receipt className="w-4 h-4" />
-              <span>Go to POS</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              <Receipt className="w-3.5 h-3.5" />
+              <span>POS</span>
+              <ArrowRight className="w-3 h-3" />
             </Link>
           </div>
         </header>
 
-        {/* Content Container */}
-        <div className="p-6 max-w-7xl mx-auto w-full space-y-5">
-          {/* Top Filter Tabs & Stats Bar */}
+        {/* Audio Autoplay Unlock Banner */}
+        {!audioUnlocked && (
+          <div className="bg-amber-500 text-white px-4 py-2 flex items-center justify-between text-xs font-bold shrink-0 shadow-xs animate-in slide-in-from-top">
+            <div className="flex items-center gap-2">
+              <Volume2 className="w-3.5 h-3.5 animate-bounce" />
+              <span className="text-[11px]">Click anywhere on screen to enable real-time kitchen bell sound notifications.</span>
+            </div>
+            <button
+              onClick={async () => {
+                await soundService.unlockAudio();
+                await soundService.playKitchenBell();
+                setAudioUnlocked(true);
+              }}
+              className="py-1 px-3 rounded-lg bg-white text-amber-900 font-extrabold text-[11px] shadow-xs hover:bg-amber-50 transition-all cursor-pointer"
+            >
+              🔔 Enable Sound
+            </button>
+          </div>
+        )}
+
+        {/* Space-Efficient Content Container (Expanded for full widescreen 4-column layout) */}
+        <div className="p-2 sm:p-3 max-w-none mx-auto w-full space-y-2">
+          {/* Top Filter Tabs & Stats Bar - Space Efficient */}
           <div
-            className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-2.5 rounded-2xl border transition-colors ${
+            className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-1.5 rounded-xl border transition-colors ${
               isDarkMode
                 ? "bg-slate-950 border-slate-800"
                 : "bg-white border-slate-200/90 shadow-2xs"
             }`}
           >
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+            <div className="flex items-center gap-1 overflow-x-auto pb-0.5 sm:pb-0">
               <button
                 onClick={() => setFilterTab("ALL")}
-                className={`py-1.5 px-3 rounded-xl text-xs font-extrabold transition-all shrink-0 cursor-pointer ${
+                className={`py-1 px-2.5 rounded-lg text-[11px] font-extrabold transition-all shrink-0 cursor-pointer ${
                   filterTab === "ALL"
                     ? "bg-teal-600 text-white shadow-xs"
                     : isDarkMode
@@ -483,12 +585,12 @@ export default function KitchenDisplayPage() {
                     : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                 }`}
               >
-                All Tickets ({orders.length})
+                All ({orders.length})
               </button>
 
               <button
                 onClick={() => setFilterTab("PREPARING")}
-                className={`py-1.5 px-3 rounded-xl text-xs font-extrabold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                className={`py-1 px-2.5 rounded-lg text-[11px] font-extrabold transition-all shrink-0 flex items-center gap-1 cursor-pointer ${
                   filterTab === "PREPARING"
                     ? "bg-amber-500 text-white shadow-xs"
                     : isDarkMode
@@ -496,13 +598,13 @@ export default function KitchenDisplayPage() {
                     : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                 }`}
               >
-                <Flame className="w-3.5 h-3.5" />
-                <span>Working / Preparing ({preparingCount})</span>
+                <Flame className="w-3 h-3" />
+                <span>Preparing ({preparingCount})</span>
               </button>
 
               <button
                 onClick={() => setFilterTab("READY")}
-                className={`py-1.5 px-3 rounded-xl text-xs font-extrabold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                className={`py-1 px-2.5 rounded-lg text-[11px] font-extrabold transition-all shrink-0 flex items-center gap-1 cursor-pointer ${
                   filterTab === "READY"
                     ? "bg-emerald-600 text-white shadow-xs"
                     : isDarkMode
@@ -510,13 +612,13 @@ export default function KitchenDisplayPage() {
                     : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                 }`}
               >
-                <BellRing className="w-3.5 h-3.5" />
+                <BellRing className="w-3 h-3" />
                 <span>Food Ready ({readyCount})</span>
               </button>
 
               <button
                 onClick={() => setFilterTab("BILLED")}
-                className={`py-1.5 px-3 rounded-xl text-xs font-extrabold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                className={`py-1 px-2.5 rounded-lg text-[11px] font-extrabold transition-all shrink-0 flex items-center gap-1 cursor-pointer ${
                   filterTab === "BILLED"
                     ? "bg-teal-700 text-white shadow-xs"
                     : isDarkMode
@@ -524,57 +626,62 @@ export default function KitchenDisplayPage() {
                     : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                 }`}
               >
-                <Receipt className="w-3.5 h-3.5" />
+                <Receipt className="w-3 h-3" />
                 <span>Billed ({billedCount})</span>
               </button>
             </div>
 
             <div
-              className={`flex items-center gap-4 text-xs font-bold px-3 py-1 rounded-xl transition-colors ${
+              className={`flex items-center gap-3 text-[11px] font-bold px-2.5 py-1 rounded-lg transition-colors ${
                 isDarkMode ? "text-slate-400" : "text-slate-600 bg-slate-50 border border-slate-200/60"
               }`}
             >
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                 <span>Cooking: {preparingCount}</span>
               </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
                 <span>Ready: {readyCount}</span>
               </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-teal-500" />
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-teal-500" />
                 <span>Billed: {billedCount}</span>
               </span>
             </div>
           </div>
 
-          {/* Cards Grid */}
+          {/* High-Density Responsive Grid Layout:
+              - Mobile (<768px): 1 col
+              - Tablet (768px-1023px): 2 cols
+              - Laptop (1024px-1439px): 3 cols
+              - Desktop (1440px+): 4 cols
+          */}
           {loading ? (
-            <div className="py-24 text-center text-slate-500 text-xs">
-              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-teal-600" />
-              <span className="font-semibold">Syncing kitchen display...</span>
+            <div className="py-20 text-center text-slate-500 text-xs">
+              <Loader2 className="w-7 h-7 animate-spin mx-auto mb-2 text-teal-600" />
+              <span className="font-semibold text-xs">Syncing kitchen display...</span>
             </div>
           ) : filteredOrders.length === 0 ? (
             <div
-              className={`py-20 text-center rounded-3xl p-8 border border-dashed transition-colors ${
+              className={`py-16 text-center rounded-2xl p-6 border border-dashed transition-colors ${
                 isDarkMode
                   ? "border-slate-800 bg-slate-950/40"
                   : "border-slate-300 bg-white shadow-xs"
               }`}
             >
-              <div className="w-14 h-14 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 mx-auto mb-3">
-                <ChefHat className="w-7 h-7" />
+              <div className="w-12 h-12 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 mx-auto mb-2.5">
+                <ChefHat className="w-6 h-6" />
               </div>
               <p
-                className={`text-base font-extrabold ${
+                className={`text-sm font-extrabold ${
                   isDarkMode ? "text-slate-200" : "text-slate-800"
                 }`}
               >
                 All Cooking Orders Cleared!
               </p>
               <p
-                className={`text-xs mt-1 max-w-md mx-auto ${
+                className={`text-[11px] mt-0.5 max-w-sm mx-auto ${
                   isDarkMode ? "text-slate-400" : "text-slate-500"
                 }`}
               >
@@ -582,7 +689,7 @@ export default function KitchenDisplayPage() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 min-[1700px]:grid-cols-5 gap-2 items-start">
               {filteredOrders.map((order) => {
                 const isReady = order.status === "READY";
                 const isPreparing = order.status === "PREPARING";
@@ -619,31 +726,37 @@ export default function KitchenDisplayPage() {
                   }
                 });
 
+                const isHighlighted = highlightedTicketIds.has(order._id);
+
                 return (
                   <div
                     key={order._id}
-                    className={`rounded-2xl border flex flex-col justify-between transition-all duration-200 overflow-hidden ${
-                      isDarkMode
+                    className={`kds-ticket rounded-md border flex flex-col transition-all duration-200 overflow-hidden ${
+                      isHighlighted
+                        ? "border-amber-400 ring-2 ring-amber-400/40 shadow-lg shadow-amber-500/10 animate-pulse bg-amber-50/10"
+                        : isDarkMode
                         ? isReady
-                          ? "bg-slate-950 border-emerald-500/80 shadow-lg shadow-emerald-500/10 ring-1 ring-emerald-500/50"
+                          ? "bg-slate-950 border-emerald-500/80 shadow-md ring-1 ring-emerald-500/40"
                           : isBilled
-                          ? "bg-slate-950 border-teal-500/70 shadow-md shadow-teal-500/5 ring-1 ring-teal-500/30"
+                          ? "bg-slate-950 border-teal-500/70 shadow-sm ring-1 ring-teal-500/30"
                           : isPreparing
-                          ? "bg-slate-950 border-amber-500/50 shadow-md shadow-amber-500/5 ring-1 ring-amber-500/30"
-                          : "bg-slate-950 border-slate-800 shadow-sm"
+                          ? "bg-slate-950 border-amber-500/50 shadow-sm ring-1 ring-amber-500/30"
+                          : "bg-slate-950 border-slate-800 shadow-xs"
                         : isReady
-                        ? "bg-white border-emerald-400 ring-2 ring-emerald-400/30 shadow-lg shadow-emerald-500/5"
+                        ? "bg-white border-emerald-400 ring-1 ring-emerald-400/30 shadow-md shadow-emerald-500/5"
                         : isBilled
-                        ? "bg-white border-teal-400 ring-1 ring-teal-400/30 shadow-md shadow-teal-500/5"
+                        ? "bg-white border-teal-400 ring-1 ring-teal-400/30 shadow-xs"
                         : isPreparing
-                        ? "bg-white border-amber-400 ring-1 ring-amber-400/30 shadow-md shadow-amber-500/5"
+                        ? "bg-white border-amber-400 ring-1 ring-amber-400/30 shadow-xs"
                         : "bg-white border-slate-200 shadow-xs hover:shadow-md"
                     }`}
                   >
-                    {/* Top Status Accent Bar */}
+                    {/* Top Status Accent Bar - Thin 2px */}
                     <div
-                      className={`h-1.5 w-full ${
-                        isReady
+                      className={`h-0.5 w-full ${
+                        isHighlighted
+                          ? "bg-amber-500 animate-pulse"
+                          : isReady
                           ? "bg-emerald-500"
                           : isBilled
                           ? "bg-teal-600"
@@ -653,38 +766,47 @@ export default function KitchenDisplayPage() {
                       }`}
                     />
 
-                    <div className="p-5 flex-1 flex flex-col justify-between">
+                    <div className="p-2.5 flex-1 flex flex-col justify-between">
                       <div>
-                        {/* Card Header: Order #, Table, Elapsed Time */}
+                        {/* Compact Card Header: Order #, Elapsed Time & Status Badge */}
                         <div
-                          className={`flex items-start justify-between pb-3.5 mb-3.5 border-b ${
+                          className={`flex items-start justify-between pb-2 mb-2 border-b ${
                             isDarkMode ? "border-slate-800" : "border-slate-100"
                           }`}
                         >
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5">
                               <span
-                                className={`text-base font-black font-mono tracking-tight ${
+                                className={`text-xs font-black font-mono tracking-tight ${
                                   isDarkMode ? "text-teal-400" : "text-slate-900"
                                 }`}
                               >
                                 {order.orderNumber}
                               </span>
+
+                              {isHighlighted && (
+                                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-amber-500 text-white animate-bounce flex items-center gap-0.5 shadow-xs">
+                                  <Bell className="w-2.5 h-2.5" />
+                                  <span>NEW</span>
+                                </span>
+                              )}
+
                               <span
-                                className={`text-[11px] font-semibold flex items-center gap-1 px-2 py-0.5 rounded-md ${
+                                className={`text-[10px] font-semibold flex items-center gap-0.5 px-1.5 py-0.2 rounded ${
                                   isDarkMode
                                     ? "text-slate-400 bg-slate-900 border border-slate-800"
                                     : "text-slate-600 bg-slate-100 border border-slate-200/70"
                                 }`}
                               >
-                                <Clock className="w-3 h-3 text-slate-400" />
+                                <Clock className="w-2.5 h-2.5 text-slate-400" />
                                 <span>{getElapsedTime(order.createdAt)}</span>
                               </span>
                             </div>
 
-                            <div className="mt-1.5 flex items-center gap-2">
+                            {/* Table & Dining Area Info Badge */}
+                            <div className="mt-1 flex items-center gap-1.5">
                               <span
-                                className={`text-xs font-black px-2.5 py-0.5 rounded-lg border ${
+                                className={`text-[11px] font-extrabold px-2 py-0.5 rounded border leading-tight ${
                                   isDarkMode
                                     ? "bg-slate-900 border-slate-700 text-teal-300"
                                     : "bg-teal-50 border-teal-200 text-teal-800"
@@ -697,7 +819,7 @@ export default function KitchenDisplayPage() {
 
                           {/* Status Badge */}
                           <span
-                            className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border shadow-2xs ${
+                            className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border shadow-2xs shrink-0 ${
                               isReady
                                 ? isDarkMode
                                   ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 animate-pulse"
@@ -723,54 +845,54 @@ export default function KitchenDisplayPage() {
                           </span>
                         </div>
 
-                        {/* Ready Food Callout */}
+                        {/* Compact Ready Callout */}
                         {isReady && (
                           <div
-                            className={`mb-3.5 p-3 rounded-xl border flex items-center gap-2.5 text-xs font-extrabold ${
+                            className={`mb-2 p-1.5 rounded-lg border flex items-center gap-1.5 text-[11px] font-extrabold ${
                               isDarkMode
                                 ? "bg-emerald-950/60 border-emerald-500/50 text-emerald-300"
                                 : "bg-emerald-50/90 border-emerald-200 text-emerald-800 shadow-2xs"
                             }`}
                           >
-                            <BellRing className="w-4 h-4 text-emerald-600 animate-bounce shrink-0" />
-                            <span>Food is Prepared & Ready to Serve!</span>
+                            <BellRing className="w-3.5 h-3.5 text-emerald-600 animate-bounce shrink-0" />
+                            <span>Food Ready to Serve!</span>
                           </div>
                         )}
 
-                        {/* Billed Callout */}
+                        {/* Compact Billed Callout */}
                         {isBilled && (
                           <div
-                            className={`mb-3.5 p-3 rounded-xl border flex items-center justify-between text-xs font-bold ${
+                            className={`mb-2 p-1.5 rounded-lg border flex items-center justify-between text-[11px] font-bold ${
                               isDarkMode
                                 ? "bg-teal-950/60 border-teal-500/50 text-teal-300"
                                 : "bg-teal-50/90 border-teal-200 text-teal-900 shadow-2xs"
                             }`}
                           >
-                            <span className="flex items-center gap-2">
-                              <Receipt className="w-4 h-4 text-teal-600" />
+                            <span className="flex items-center gap-1.5">
+                              <Receipt className="w-3.5 h-3.5 text-teal-600" />
                               <span>Invoice Generated</span>
                             </span>
-                            <span className="font-mono font-black text-[11px]">
+                            <span className="font-mono font-black text-[10px]">
                               {order.invoiceNumber || ""}
                             </span>
                           </div>
                         )}
 
-                        {/* Items List (Consolidated with readable Rupee Prices) */}
-                        <div className="space-y-2 mb-4">
+                        {/* Compact Items List (Max-height scrollable for multi-item orders) */}
+                        <div className="space-y-1 mb-2 max-h-44 overflow-y-auto pr-0.5">
                           {consolidatedItems.map((item: any, idx: number) => (
                             <div
                               key={idx}
-                              className={`flex items-start justify-between text-xs p-2.5 rounded-xl border transition-colors ${
+                              className={`flex items-start justify-between text-xs py-1 px-2 rounded-lg border transition-colors ${
                                 isDarkMode
                                   ? "bg-slate-900/60 border-slate-800/80 text-slate-200"
                                   : "bg-slate-50/90 border-slate-200/70 text-slate-800 hover:bg-slate-100/60"
                               }`}
                             >
-                              <div className="flex-1 pr-2">
-                                <div className="flex items-center gap-2">
+                              <div className="flex-1 pr-1.5">
+                                <div className="flex items-baseline gap-1.5">
                                   <span
-                                    className={`px-1.5 py-0.5 rounded font-black text-xs ${
+                                    className={`px-1 py-0.2 rounded font-black text-[11px] shrink-0 ${
                                       isDarkMode
                                         ? "bg-teal-500/20 text-teal-300 border border-teal-500/30"
                                         : "bg-teal-100 text-teal-800 border border-teal-200"
@@ -779,7 +901,7 @@ export default function KitchenDisplayPage() {
                                     {item.quantity}x
                                   </span>
                                   <span
-                                    className={`font-bold text-sm ${
+                                    className={`font-bold text-xs leading-tight ${
                                       isDarkMode ? "text-white" : "text-slate-900"
                                     }`}
                                   >
@@ -787,21 +909,21 @@ export default function KitchenDisplayPage() {
                                   </span>
                                 </div>
                                 {item.notes && (
-                                  <div className="mt-1">
+                                  <div className="mt-0.5">
                                     <span
-                                      className={`text-[11px] font-semibold px-2 py-0.5 rounded border inline-block ${
+                                      className={`text-[10px] font-semibold px-1.5 py-0.2 rounded border inline-block leading-tight ${
                                         isDarkMode
                                           ? "text-amber-300 bg-amber-950/50 border-amber-500/40"
                                           : "text-amber-900 bg-amber-50 border-amber-200"
                                       }`}
                                     >
-                                      Special Note: &quot;{item.notes}&quot;
+                                      Note: &quot;{item.notes}&quot;
                                     </span>
                                   </div>
                                 )}
                               </div>
                               <span
-                                className={`text-xs font-mono font-bold shrink-0 ${
+                                className={`text-[10px] font-mono font-bold shrink-0 ${
                                   isDarkMode ? "text-slate-300" : "text-slate-700"
                                 }`}
                               >
@@ -812,9 +934,9 @@ export default function KitchenDisplayPage() {
                         </div>
                       </div>
 
-                      {/* Bottom Action Controls */}
+                      {/* Compact Footer Action Controls - Height ~34-36px */}
                       <div
-                        className={`pt-3.5 border-t space-y-2 ${
+                        className={`pt-2 border-t space-y-1.5 ${
                           isDarkMode ? "border-slate-800/80" : "border-slate-100"
                         }`}
                       >
@@ -823,12 +945,12 @@ export default function KitchenDisplayPage() {
                           <button
                             onClick={() => updateStatus(order._id, "PREPARING")}
                             disabled={isUpdating}
-                            className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-black transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-50"
+                            className="w-full py-1.5 px-3 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 min-h-[34px]"
                           >
                             {isUpdating ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             ) : (
-                              <Flame className="w-4 h-4 text-white" />
+                              <Flame className="w-3.5 h-3.5 text-white" />
                             )}
                             <span>Start Preparing (Working)</span>
                           </button>
@@ -839,12 +961,12 @@ export default function KitchenDisplayPage() {
                           <button
                             onClick={() => updateStatus(order._id, "READY")}
                             disabled={isUpdating}
-                            className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-50"
+                            className="w-full py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 min-h-[34px]"
                           >
                             {isUpdating ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             ) : (
-                              <Check className="w-4 h-4 text-white" />
+                              <Check className="w-3.5 h-3.5 text-white" />
                             )}
                             <span>Mark Food as Ready</span>
                           </button>
@@ -852,16 +974,16 @@ export default function KitchenDisplayPage() {
 
                         {/* Step 3: READY -> Generate Bill Directly On Screen + Mark as Served */}
                         {isReady && (
-                          <div className="space-y-2">
+                          <div className="space-y-1.5">
                             <button
                               onClick={() => handleGenerateBillOnScreen(order)}
                               disabled={isGenerating}
-                              className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-black transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-50"
+                              className="w-full py-1.5 px-3 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 min-h-[34px]"
                             >
                               {isGenerating ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
                               ) : (
-                                <Receipt className="w-4 h-4" />
+                                <Receipt className="w-3.5 h-3.5" />
                               )}
                               <span>Generate Bill (On Screen)</span>
                             </button>
@@ -869,13 +991,13 @@ export default function KitchenDisplayPage() {
                             <button
                               onClick={() => updateStatus(order._id, "SERVED")}
                               disabled={isUpdating}
-                              className={`w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 ${
+                              className={`w-full py-1 px-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 min-h-[30px] ${
                                 isDarkMode
                                   ? "bg-slate-900 border border-slate-700 hover:bg-slate-800 text-slate-300"
                                   : "bg-slate-100 border border-slate-200 hover:bg-slate-200 text-slate-700"
                               }`}
                             >
-                              <Utensils className="w-3.5 h-3.5 text-blue-600" />
+                              <Utensils className="w-3 h-3 text-blue-600" />
                               <span>Mark as Served</span>
                             </button>
                           </div>
@@ -883,16 +1005,16 @@ export default function KitchenDisplayPage() {
 
                         {/* Step 4: SERVED -> Generate Bill Directly On Screen */}
                         {isServed && (
-                          <div className="space-y-2">
+                          <div className="space-y-1.5">
                             <button
                               onClick={() => handleGenerateBillOnScreen(order)}
                               disabled={isGenerating}
-                              className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-black transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-50"
+                              className="w-full py-1.5 px-3 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 min-h-[34px]"
                             >
                               {isGenerating ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
                               ) : (
-                                <Receipt className="w-4 h-4" />
+                                <Receipt className="w-3.5 h-3.5" />
                               )}
                               <span>Generate Bill (On Screen)</span>
                             </button>
@@ -901,26 +1023,26 @@ export default function KitchenDisplayPage() {
 
                         {/* Step 5: BILLED -> View & Print Bill On Screen + Complete */}
                         {isBilled && (
-                          <div className="space-y-2">
+                          <div className="space-y-1.5">
                             <button
                               onClick={() => handleGenerateBillOnScreen(order)}
                               disabled={isGenerating}
-                              className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-black transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-50"
+                              className="w-full py-1.5 px-3 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 min-h-[34px]"
                             >
-                              <Receipt className="w-4 h-4" />
+                              <Receipt className="w-3.5 h-3.5" />
                               <span>View & Print Bill</span>
                             </button>
 
                             <button
                               onClick={() => updateStatus(order._id, "COMPLETED")}
                               disabled={isUpdating}
-                              className={`w-full py-2 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 ${
+                              className={`w-full py-1 px-2.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 min-h-[30px] ${
                                 isDarkMode
                                   ? "bg-slate-900 border border-emerald-600/50 hover:bg-emerald-950/40 text-emerald-300"
                                   : "bg-emerald-50 border border-emerald-300 hover:bg-emerald-100 text-emerald-800"
                               }`}
                             >
-                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              <Check className="w-3 h-3 text-emerald-600" />
                               <span>Mark Completed & Clear</span>
                             </button>
                           </div>
@@ -934,6 +1056,35 @@ export default function KitchenDisplayPage() {
           )}
         </div>
       </main>
+
+
+      <style jsx global>{`
+        .kds-minimal.kds-light .kds-board { background: #ffffff !important; }
+        .kds-minimal .kds-board > header { height: 44px !important; min-height: 44px; box-shadow: none !important; }
+        .kds-minimal .kds-board > header h1 { font-size: 13px !important; font-weight: 600 !important; }
+        .kds-minimal .kds-board > header p { font-size: 10px !important; }
+        .kds-minimal .kds-ticket { min-height: 0 !important; box-shadow: none !important; border-radius: 7px !important; }
+        .kds-minimal.kds-light .kds-ticket { background: #fff !important; border-color: #e5e7eb !important; }
+        .kds-minimal .kds-ticket > div:first-child { height: 2px !important; }
+        .kds-minimal .kds-ticket .font-black,
+        .kds-minimal .kds-ticket .font-extrabold { font-weight: 600 !important; }
+        .kds-minimal .kds-ticket .text-xs { font-size: 11px !important; line-height: 1.35 !important; }
+        .kds-minimal .kds-ticket .text-sm { font-size: 12px !important; }
+        .kds-minimal .kds-ticket .text-\[11px\] { font-size: 10px !important; }
+        .kds-minimal .kds-ticket .text-\[10px\] { font-size: 10px !important; }
+        .kds-minimal .kds-ticket button { min-height: 30px !important; padding: 5px 8px !important; font-size: 10px !important; font-weight: 600 !important; border-radius: 5px !important; box-shadow: none !important; }
+        .kds-minimal .kds-ticket .rounded-lg { border-radius: 5px !important; }
+        .kds-minimal.kds-light .kds-ticket .bg-slate-50\/90,
+        .kds-minimal.kds-light .kds-ticket .bg-slate-100 { background: #fff !important; }
+        .kds-minimal .kds-ticket .animate-pulse,
+        .kds-minimal .kds-ticket .animate-bounce { animation: none !important; }
+        .kds-minimal.kds-light .kds-board > div > div:first-child { box-shadow: none !important; }
+        .kds-minimal .kds-ticket .shadow-xs,
+        .kds-minimal .kds-ticket .shadow-md { box-shadow: none !important; }
+        @media (max-width: 640px) {
+          .kds-minimal .kds-board > header { padding-left: 10px; padding-right: 10px; }
+        }
+      `}</style>
 
       {/* Toast Notification Container */}
       {toast && (

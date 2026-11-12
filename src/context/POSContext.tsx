@@ -19,6 +19,7 @@ import {
 } from "../types/pos";
 import { apiClient } from "../lib/apiClient";
 import { getSocket } from "../lib/socket";
+import { soundService } from "../lib/soundService";
 
 interface DiscountState {
   type: "PERCENTAGE" | "FIXED";
@@ -274,16 +275,33 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
       }
     };
 
+    const handleFoodReady = (data: any) => {
+      const orderNum = data.orderNumber || (data.order?.orderNumber) || "Order";
+      const tableInfo = data.tableNumber || (data.order?.tableId?.tableNumber ? `Table ${data.order.tableId.tableNumber}` : "Dine-In");
+      const eventKey = `food-ready:${data.kotId || data.orderId || orderNum}`;
+
+      // Play pleasant two-tone "DING-DONG!" chime
+      soundService.playFoodReady(eventKey);
+
+      // Toast notification for Cashier & Waiter
+      addToast(`🔔 Food Ready – ${orderNum} – ${tableInfo}`, "success");
+
+      // Reload tables so live indicator updates
+      loadTables();
+    };
+
     socket.on("table:released", handleTableReleased);
     socket.on("order:completed", handleOrderCompleted);
     socket.on("payment:refunded", handlePaymentRefunded);
+    socket.on("kitchen:order-ready", handleFoodReady);
 
     return () => {
       socket.off("table:released", handleTableReleased);
       socket.off("order:completed", handleOrderCompleted);
       socket.off("payment:refunded", handlePaymentRefunded);
+      socket.off("kitchen:order-ready", handleFoodReady);
     };
-  }, [activeOrderId, activeInvoice, addToast]);
+  }, [activeOrderId, activeInvoice, addToast, loadTables]);
 
   // Cart operations
   const addToCart = (item: MenuItem) => {
@@ -501,6 +519,8 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
         );
 
         if (kotRes.success) {
+          soundService.unlockAudio();
+          soundService.playKitchenBell();
           addToast(
             `Order ${orderNum || ""} sent to kitchen! (KOT: ${kotRes.data?.kotNumber || ""})`,
             "success"

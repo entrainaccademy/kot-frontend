@@ -94,7 +94,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     };
   }, []);
 
-  const login = async (email: string, pass: string): Promise<{ success: boolean; message?: string }> => {
+  const login = async (email: string, pass: string): Promise<{ success: boolean; message?: string; user?: AuthUser }> => {
     try {
       const res = await apiClient.post<LoginResponse>("/auth/login", {
         email,

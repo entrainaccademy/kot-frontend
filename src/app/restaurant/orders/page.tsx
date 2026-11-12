@@ -5,6 +5,9 @@ import Link from "next/link";
 import { POSSidebar } from "../../../components/pos/POSSidebar";
 import { useAuth } from "../../../context/AuthContext";
 import { apiClient } from "../../../lib/apiClient";
+import { getSocket } from "../../../lib/socket";
+import { soundService } from "../../../lib/soundService";
+import { SoundControl } from "../../../components/common/SoundControl";
 import {
   UtensilsCrossed,
   Receipt,
@@ -41,6 +44,36 @@ export default function RestaurantOrdersPage() {
 
   useEffect(() => {
     loadOrders();
+
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleUpdate = () => {
+      loadOrders();
+    };
+
+    const handleFoodReady = (data: any) => {
+      loadOrders();
+      const orderNum = data.orderNumber || "Order";
+      const eventKey = `food-ready:${data.kotId || data.orderId || orderNum}`;
+
+      // Play Food Ready "DING-DONG!" chime
+      soundService.playFoodReady(eventKey);
+    };
+
+    socket.on("order:created", handleUpdate);
+    socket.on("order:updated", handleUpdate);
+    socket.on("kot:created", handleUpdate);
+    socket.on("kot:updated", handleUpdate);
+    socket.on("kitchen:order-ready", handleFoodReady);
+
+    return () => {
+      socket.off("order:created", handleUpdate);
+      socket.off("order:updated", handleUpdate);
+      socket.off("kot:created", handleUpdate);
+      socket.off("kot:updated", handleUpdate);
+      socket.off("kitchen:order-ready", handleFoodReady);
+    };
   }, [loadOrders]);
 
   const getOrderTotal = (order: any) => {
@@ -152,7 +185,9 @@ export default function RestaurantOrdersPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            <SoundControl />
+
             <button
               onClick={loadOrders}
               className="p-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
