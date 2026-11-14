@@ -4,7 +4,7 @@ import { getAccessToken } from "./apiClient";
 let socketInstance: Socket | null = null;
 
 const SOCKET_SERVER_URL =
-  process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:5000";
+  process.env.NEXT_PUBLIC_SOCKET_URL || "https://kot-backend-za5d.onrender.com";
 
 export const getSocket = (): Socket | null => {
   return socketInstance;

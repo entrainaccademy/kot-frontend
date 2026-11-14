@@ -44,9 +44,9 @@ function LoginContent() {
       }
     } catch (err: any) {
       console.error("Login attempt failed:", err);
-      if (err.message && (err.message.includes("404") || err.message.includes("Failed to fetch"))) {
+      if (err.message && (err.message.includes("404") || err.message.includes("Failed to fetch") || err.message.includes("NetworkError"))) {
         setErrorMsg(
-          "Cannot reach backend API (http://localhost:5000/api/auth/login). Please ensure the backend server is running via 'npm run dev' in the backend terminal."
+          "Cannot reach backend server. Please verify your connection or check that the backend is online."
         );
       } else {
         setErrorMsg(err.message || "Authentication failed. Please verify credentials.");
