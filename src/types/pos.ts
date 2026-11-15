@@ -176,3 +176,75 @@ export interface ThermalReceiptData {
   htmlReceipt: string;
 }
 
+export type BillRequestStatus = "NOT_REQUESTED" | "REQUESTED" | "CONFIRMED" | "CANCELLED";
+
+export interface BillRequestItem {
+  _id?: string;
+  name: string;
+  quantity: number;
+  price: number;
+  itemTotal: number;
+  taxRate: number;
+  notes?: string;
+  status: string;
+}
+
+export interface BillRequestOrder {
+  _id: string;
+  restaurantId?: string;
+  orderNumber: string;
+  orderType: OrderType;
+  tableId?: {
+    _id: string;
+    tableNumber: string;
+    floor?: string;
+    status?: string;
+  };
+  customerId?: {
+    _id?: string;
+    name: string;
+    phone: string;
+  };
+  items: BillRequestItem[];
+  subtotal: number;
+  tax: number;
+  discount: number;
+  grandTotal: number;
+  status: string;
+  billRequest: {
+    status: BillRequestStatus;
+    requestedBy?: {
+      _id: string;
+      name: string;
+      role: string;
+      email?: string;
+    };
+    requestedAt?: string;
+    tableNumber?: string;
+    confirmedBy?: {
+      _id: string;
+      name: string;
+      role: string;
+    };
+    confirmedAt?: string;
+    cancelledBy?: {
+      _id: string;
+      name: string;
+      role: string;
+    };
+    cancelledAt?: string;
+    cancelReason?: string;
+    invoiceId?: {
+      _id: string;
+      invoiceNumber: string;
+      paymentStatus: string;
+      grandTotal: number;
+      paidAmount: number;
+      balanceAmount: number;
+    };
+  };
+  createdAt: string;
+  updatedAt?: string;
+}
+
+

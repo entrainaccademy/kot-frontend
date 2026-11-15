@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { POSSidebar } from "../../../components/pos/POSSidebar";
+import { BillReviewModal } from "../../../components/pos/BillReviewModal";
 import { useAuth } from "../../../context/AuthContext";
 import { apiClient } from "../../../lib/apiClient";
 import { getSocket } from "../../../lib/socket";
@@ -27,71 +28,9 @@ import {
   X,
   Loader2,
   Filter,
+  Eye,
 } from "lucide-react";
-
-interface BillRequestOrder {
-  _id: string;
-  orderNumber: string;
-  orderType: string;
-  tableId?: {
-    _id: string;
-    tableNumber: string;
-    floor?: string;
-    status?: string;
-  };
-  customerId?: {
-    name: string;
-    phone: string;
-  };
-  items: Array<{
-    _id?: string;
-    name: string;
-    quantity: number;
-    price: number;
-    itemTotal: number;
-    taxRate: number;
-    notes?: string;
-    status: string;
-  }>;
-  subtotal: number;
-  tax: number;
-  discount: number;
-  grandTotal: number;
-  status: string;
-  billRequest: {
-    status: "NOT_REQUESTED" | "REQUESTED" | "CONFIRMED" | "CANCELLED";
-    requestedBy?: {
-      _id: string;
-      name: string;
-      role: string;
-      email?: string;
-    };
-    requestedAt?: string;
-    tableNumber?: string;
-    confirmedBy?: {
-      _id: string;
-      name: string;
-      role: string;
-    };
-    confirmedAt?: string;
-    cancelledBy?: {
-      _id: string;
-      name: string;
-      role: string;
-    };
-    cancelledAt?: string;
-    cancelReason?: string;
-    invoiceId?: {
-      _id: string;
-      invoiceNumber: string;
-      paymentStatus: string;
-      grandTotal: number;
-      paidAmount: number;
-      balanceAmount: number;
-    };
-  };
-  createdAt: string;
-}
+import { BillRequestOrder } from "../../../types/pos";
 
 export default function BillsPage() {
   const { user } = useAuth();
@@ -99,6 +38,10 @@ export default function BillsPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  // Review Modal State ("View Bill / Generate Bill")
+  const [reviewOrder, setReviewOrder] = useState<BillRequestOrder | null>(null);
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState<boolean>(false);
 
   // Filters State
   const [statusFilter, setStatusFilter] = useState<"REQUESTED" | "CONFIRMED" | "ALL">("REQUESTED");
@@ -702,6 +645,17 @@ export default function BillsPage() {
                         {isRequested && (
                           <div className="flex items-center gap-2">
                             <button
+                              onClick={() => {
+                                setReviewOrder(order);
+                                setIsReviewModalOpen(true);
+                              }}
+                              className="flex-1 py-2 px-3 rounded-xl border border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-800 text-xs font-bold flex items-center justify-center gap-1.5 shadow-2xs transition-all cursor-pointer min-h-[36px]"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-teal-700" />
+                              <span>View Bill</span>
+                            </button>
+
+                            <button
                               onClick={() => handleConfirmBill(order)}
                               disabled={isConfirming || isCancelling}
                               className="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50 min-h-[36px]"
@@ -717,7 +671,7 @@ export default function BillsPage() {
                             <button
                               onClick={() => handleCancelRequest(order)}
                               disabled={isConfirming || isCancelling}
-                              className="py-2 px-3 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold transition-all cursor-pointer disabled:opacity-50 min-h-[36px]"
+                              className="py-2 px-2.5 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold transition-all cursor-pointer disabled:opacity-50 min-h-[36px]"
                               title="Cancel this request"
                             >
                               <X className="w-4 h-4" />
@@ -766,6 +720,24 @@ export default function BillsPage() {
           )}
         </div>
       </main>
+
+      {/* Bill Review & Confirmation Modal */}
+      <BillReviewModal
+        isOpen={isReviewModalOpen}
+        order={reviewOrder}
+        onClose={() => setIsReviewModalOpen(false)}
+        onConfirm={async (order) => {
+          await handleConfirmBill(order);
+          setIsReviewModalOpen(false);
+        }}
+        onCancelRequest={handleCancelRequest}
+        onPrintReceipt={openReceiptModal}
+        onDownloadPdf={handleDownloadPdf}
+        onSettlePayment={() => {
+          window.location.href = "/restaurant/pos";
+        }}
+        isConfirming={confirmingId === reviewOrder?._id}
+      />
 
       {/* Thermal Receipt Print Modal */}
       {receiptModalOrder && (
