@@ -3,9 +3,12 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "../../context/AuthContext";
+import { apiClient } from "../../lib/apiClient";
+import { getSocket } from "../../lib/socket";
 import {
   LayoutDashboard,
   Receipt,
+  FileText,
   UtensilsCrossed,
   Grid3X3,
   ChefHat,
@@ -25,14 +28,49 @@ interface POSSidebarProps {
 export const POSSidebar: React.FC<POSSidebarProps> = ({ activePath = "/restaurant/pos" }) => {
   const { user, logout } = useAuth();
   const [mounted, setMounted] = useState(false);
+  const [pendingBillCount, setPendingBillCount] = useState<number>(0);
 
   useEffect(() => {
     setMounted(true);
+
+    let isSubscribed = true;
+    const fetchPendingCount = async () => {
+      try {
+        const res = await apiClient.get<{ success: boolean; pendingCount?: number }>(
+          "/restaurant/bill-requests?status=REQUESTED&limit=1"
+        );
+        if (isSubscribed && res.success && typeof res.pendingCount === "number") {
+          setPendingBillCount(res.pendingCount);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    fetchPendingCount();
+
+    const socket = getSocket();
+    if (socket) {
+      const handleSync = () => fetchPendingCount();
+      socket.on("bill:requested", handleSync);
+      socket.on("bill:confirmed", handleSync);
+      socket.on("bill:cancelled", handleSync);
+      socket.on("order:billed", handleSync);
+
+      return () => {
+        isSubscribed = false;
+        socket.off("bill:requested", handleSync);
+        socket.off("bill:confirmed", handleSync);
+        socket.off("bill:cancelled", handleSync);
+        socket.off("order:billed", handleSync);
+      };
+    }
   }, []);
 
   const navItems = [
     { name: "Dashboard", href: "/restaurant/dashboard", icon: LayoutDashboard },
     { name: "POS Billing", href: "/restaurant/pos", icon: Receipt },
+    { name: "Bills", href: "/restaurant/bills", icon: FileText, badge: pendingBillCount },
     { name: "Orders", href: "/restaurant/orders", icon: UtensilsCrossed },
     { name: "Tables", href: "/restaurant/tables", icon: Grid3X3 },
     { name: "Kitchen Display", href: "/restaurant/kitchen", icon: ChefHat },
@@ -81,8 +119,14 @@ export const POSSidebar: React.FC<POSSidebarProps> = ({ activePath = "/restauran
                 }`}
               />
               <span>{item.name}</span>
-              {isActive && (
-                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-teal-600" />
+              {typeof item.badge === "number" && item.badge > 0 ? (
+                <span className="ml-auto px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white animate-pulse shadow-xs">
+                  {item.badge}
+                </span>
+              ) : (
+                isActive && (
+                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-teal-600" />
+                )
               )}
             </Link>
           );
