@@ -116,6 +116,14 @@ export const BillingSidebar: React.FC<BillingSidebarProps> = ({
     }
   }, [order]);
 
+  // Quick chips for popular add-ons
+  const quickAddOns = useMemo(() => {
+    const names = ["water", "bottle", "soda", "cold drink", "roti", "naan"];
+    return menuItems.filter((m) =>
+      names.some((n) => m.name.toLowerCase().includes(n))
+    ).slice(0, 3);
+  }, [menuItems]);
+
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setSidebarToast({ message, type });
     setTimeout(() => setSidebarToast(null), 3000);
@@ -254,14 +262,6 @@ export const BillingSidebar: React.FC<BillingSidebarProps> = ({
   const handleRemoveExtraItem = (menuItemId: string) => {
     setExtraItems((prev) => prev.filter((i) => i.menuItemId !== menuItemId));
   };
-
-  // Quick chips for popular add-ons
-  const quickAddOns = useMemo(() => {
-    const names = ["water", "bottle", "soda", "cold drink", "roti", "naan"];
-    return menuItems.filter((m) =>
-      names.some((n) => m.name.toLowerCase().includes(n))
-    ).slice(0, 3);
-  }, [menuItems]);
 
   // Handle Confirm Bill
   const handleConfirm = async () => {
