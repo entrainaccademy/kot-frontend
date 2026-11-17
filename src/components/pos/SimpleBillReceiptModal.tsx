@@ -23,7 +23,7 @@ interface SimpleBillReceiptModalProps {
 export const SimpleBillReceiptModal: React.FC<SimpleBillReceiptModalProps> = ({
   isOpen,
   onClose,
-  invoice,
+  invoice: rawInvoice,
   payments = [],
 }) => {
   const [paperWidth, setPaperWidth] = useState<"80mm" | "58mm">("80mm");
@@ -31,8 +31,18 @@ export const SimpleBillReceiptModal: React.FC<SimpleBillReceiptModalProps> = ({
   const [latestPayments, setLatestPayments] = useState<PaymentRecord[]>(payments);
   const [loadingPayments, setLoadingPayments] = useState(false);
 
+  // Normalize invoice if backend wrapped it in { invoice, payments }
+  const invoice = ((rawInvoice as any)?.invoice || rawInvoice) as Invoice | null;
+
   useEffect(() => {
-    if (!isOpen || !invoice) return;
+    if (!isOpen || !invoice || !invoice._id) return;
+
+    // If payments were already provided or in the wrapped payload
+    const initialPayments = (rawInvoice as any)?.payments || payments;
+    if (Array.isArray(initialPayments) && initialPayments.length > 0) {
+      setLatestPayments(initialPayments);
+      return;
+    }
 
     // Fetch payments for this invoice if not provided
     const fetchPayments = async () => {
@@ -53,9 +63,11 @@ export const SimpleBillReceiptModal: React.FC<SimpleBillReceiptModalProps> = ({
     };
 
     fetchPayments();
-  }, [isOpen, invoice, payments]);
+  }, [isOpen, invoice, rawInvoice, payments]);
 
-  if (!isOpen || !invoice) return null;
+  if (!isOpen || !invoice || !invoice._id) return null;
+
+  const items = Array.isArray(invoice.items) ? invoice.items : [];
 
   const restaurantName =
     invoice.restaurantSnapshot?.name || "RESTAURANT POS";
@@ -96,14 +108,14 @@ export const SimpleBillReceiptModal: React.FC<SimpleBillReceiptModalProps> = ({
     const is80 = paperWidth === "80mm";
     const maxWidth = is80 ? "300px" : "220px";
 
-    const itemsRows = invoice.items
+    const itemsRows = items
       .map(
         (item) => `
         <tr>
-          <td style="padding: 2px 0; word-break: break-word;">${item.name}</td>
-          <td style="padding: 2px 0; text-align: center;">${item.quantity}</td>
-          <td style="padding: 2px 0; text-align: right;">${item.price.toFixed(2)}</td>
-          <td style="padding: 2px 0; text-align: right;">${item.itemTotal.toFixed(2)}</td>
+          <td style="padding: 2px 0; word-break: break-word;">${item.name || "Item"}</td>
+          <td style="padding: 2px 0; text-align: center;">${item.quantity || 1}</td>
+          <td style="padding: 2px 0; text-align: right;">${Number(item.price || 0).toFixed(2)}</td>
+          <td style="padding: 2px 0; text-align: right;">${Number(item.itemTotal || 0).toFixed(2)}</td>
         </tr>`
       )
       .join("");
@@ -430,16 +442,16 @@ export const SimpleBillReceiptModal: React.FC<SimpleBillReceiptModalProps> = ({
                 <span className="w-12 text-right">RATE</span>
                 <span className="w-14 text-right">TOTAL</span>
               </div>
-              {invoice.items.map((item, idx) => (
+              {items.map((item, idx) => (
                 <div
                   key={idx}
                   className="flex justify-between items-baseline text-[11px] py-0.5"
                 >
-                  <span className="w-36 truncate">{item.name}</span>
-                  <span className="w-8 text-center">{item.quantity}</span>
-                  <span className="w-12 text-right">{item.price.toFixed(0)}</span>
+                  <span className="w-36 truncate">{item.name || "Item"}</span>
+                  <span className="w-8 text-center">{item.quantity || 1}</span>
+                  <span className="w-12 text-right">{Number(item.price || 0).toFixed(0)}</span>
                   <span className="w-14 text-right font-bold">
-                    {item.itemTotal.toFixed(2)}
+                    {Number(item.itemTotal || 0).toFixed(2)}
                   </span>
                 </div>
               ))}

@@ -288,7 +288,11 @@ export const BillingSidebar: React.FC<BillingSidebarProps> = ({
 
   // Handle Record Payment
   const handlePayment = async () => {
-    const invoiceId = order.billRequest?.invoiceId?._id;
+    const rawInvId = order.billRequest?.invoiceId;
+    const invoiceId =
+      typeof rawInvId === "object" && rawInvId !== null
+        ? (rawInvId as any)._id
+        : rawInvId;
     if (!invoiceId) {
       showToast("Please generate bill first before recording payment", "error");
       return;

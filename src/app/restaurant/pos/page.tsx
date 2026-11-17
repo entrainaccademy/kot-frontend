@@ -308,18 +308,24 @@ function POSBillingContent() {
 
   // Open Simple Thermal Print Receipt
   const handleOpenPrintBill = async (order: BillRequestOrder, invoiceProp?: Invoice) => {
-    const invoiceId = invoiceProp?._id || order.billRequest?.invoiceId?._id;
+    const rawInvoiceId = invoiceProp?._id || order.billRequest?.invoiceId;
+    const invoiceId =
+      typeof rawInvoiceId === "object" && rawInvoiceId !== null
+        ? (rawInvoiceId as any)._id
+        : rawInvoiceId;
+
     if (!invoiceId) {
       addToast("Invoice not found for this bill.", "error");
       return;
     }
 
     try {
-      const res = await apiClient.get<{ success: boolean; data: Invoice }>(
+      const res = await apiClient.get<{ success: boolean; data: any }>(
         `/restaurant/billing/invoices/${invoiceId}`
       );
       if (res.success && res.data) {
-        setPrintInvoice(res.data);
+        const actualInvoice = res.data.invoice || res.data;
+        setPrintInvoice(actualInvoice);
         setIsReceiptModalOpen(true);
       }
     } catch (err: any) {
