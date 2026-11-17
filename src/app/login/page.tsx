@@ -35,7 +35,12 @@ function LoginContent() {
         const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
         const redirectTarget = params.get("redirect");
 
-        if (redirectTarget && redirectTarget.startsWith("/")) {
+        if (
+          redirectTarget &&
+          redirectTarget.startsWith("/") &&
+          !redirectTarget.startsWith("//") &&
+          !redirectTarget.includes(":")
+        ) {
           window.location.href = redirectTarget;
         } else if (res.user?.role === "SUPER_ADMIN") {
           window.location.href = "/admin/dashboard";

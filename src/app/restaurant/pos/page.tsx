@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../../context/AuthContext";
@@ -38,6 +38,8 @@ function POSBillingContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const orderIdParam = searchParams.get("orderId");
+  const handoffTokenParam = searchParams.get("handoffToken") || searchParams.get("token");
+  const processedHandoffRef = useRef<string | null>(null);
   const { user, loading: authLoading, hasPermission } = useAuth();
   const { addToast } = usePOS();
 
@@ -197,87 +199,132 @@ function POSBillingContent() {
   // Protected route check with return redirect URL
   useEffect(() => {
     if (!authLoading && !user) {
+      const currentPath = typeof window !== "undefined" ? window.location.pathname : "/restaurant/pos";
       const currentQuery = typeof window !== "undefined" ? window.location.search : "";
-      const redirectTarget = `/restaurant/pos${currentQuery}`;
+      const redirectTarget = `${currentPath}${currentQuery}`;
       router.push(`/login?redirect=${encodeURIComponent(redirectTarget)}`);
     }
   }, [authLoading, user, router]);
 
-  // Auto-select order when orderId is provided in URL query parameter (Direct handoff from Waiter App)
+  // Auto-select order when orderId is provided in URL query parameter (Secure handoff from Waiter App)
   useEffect(() => {
-    if (!authLoading && user && orderIdParam) {
-      // 1. Check if order is already present in loaded orders
-      const existing = orders.find((o) => o._id === orderIdParam);
-      if (existing) {
-        if (!selectedOrder || selectedOrder._id !== existing._id) {
-          setSelectedOrder(existing);
-          setIsMobileDrawerOpen(true);
-        }
-        return;
+    if (authLoading || !user || !orderIdParam) return;
+
+    const trimmedOrderId = orderIdParam.trim();
+    if (!trimmedOrderId) return;
+
+    // Check if we already processed this exact order reference to prevent redundant fetches
+    if (processedHandoffRef.current === trimmedOrderId && selectedOrder?._id === trimmedOrderId) {
+      return;
+    }
+
+    // Validate format (Mongo ObjectId 24-hex or orderNumber format ORD-...)
+    const isValidIdFormat =
+      /^[0-9a-fA-F]{24}$/.test(trimmedOrderId) || trimmedOrderId.startsWith("ORD-");
+
+    if (!isValidIdFormat) {
+      addToast("Invalid order reference format in URL.", "error");
+      return;
+    }
+
+    // Role / Permission validation for billing handoff
+    if (!canAccessPOS) {
+      addToast("Access Restricted: You do not have permission to access billing.", "error");
+      return;
+    }
+
+    // 1. Check if order is already present in loaded orders list
+    const existing = orders.find(
+      (o) => o._id === trimmedOrderId || o.orderNumber === trimmedOrderId
+    );
+    if (existing) {
+      processedHandoffRef.current = trimmedOrderId;
+      if (!selectedOrder || selectedOrder._id !== existing._id) {
+        setSelectedOrder(existing);
+        setIsMobileDrawerOpen(true);
       }
+      return;
+    }
 
-      // 2. Otherwise fetch the specific order from backend
-      let isCancelled = false;
-      const loadOrderFromParam = async () => {
-        try {
+    // 2. Otherwise fetch and validate the specific order from backend
+    let isCancelled = false;
+    const loadOrderFromParam = async () => {
+      try {
+        let fetchedOrder: BillRequestOrder | null = null;
+
+        // If a cryptographically signed handoff token was supplied, verify it with backend
+        if (handoffTokenParam) {
+          try {
+            const verifyRes = await apiClient.post<{ success: boolean; data: any }>(
+              `/restaurant/orders/${trimmedOrderId}/verify-handoff`,
+              { token: handoffTokenParam }
+            );
+            if (verifyRes.success && verifyRes.data) {
+              fetchedOrder = verifyRes.data;
+            }
+          } catch (tokenErr: any) {
+            console.warn("Handoff token verification note:", tokenErr);
+            // Fall back to standard session-authenticated fetch
+          }
+        }
+
+        // Standard session-authenticated fetch if not yet loaded
+        if (!fetchedOrder) {
           const res = await apiClient.get<{ success: boolean; data: any }>(
-            `/restaurant/orders/${orderIdParam}`
+            `/restaurant/orders/${trimmedOrderId}`
           );
-
-          if (isCancelled) return;
-
           if (res.success && res.data) {
-            const fetchedOrder: BillRequestOrder = res.data;
+            fetchedOrder = res.data;
+          }
+        }
 
-            // Tenancy validation: ensure order belongs to user's restaurant
-            const orderRestId =
-              typeof fetchedOrder.restaurantId === "object" && fetchedOrder.restaurantId !== null
-                ? (fetchedOrder.restaurantId as any)._id
-                : fetchedOrder.restaurantId;
-
-            if (user.restaurantId && orderRestId && String(user.restaurantId) !== String(orderRestId)) {
-              addToast("You do not have permission to view orders from another restaurant.", "error");
-              return;
-            }
-
-            // Billing permission check
-            if (!canAccessPOS) {
-              addToast("You do not have permission to access billing.", "error");
-              return;
-            }
-
-            // Eligibility check
-            if (fetchedOrder.status === "CANCELLED") {
-              addToast("Cannot open billing for a cancelled order.", "error");
-              return;
-            }
-
-            setSelectedOrder(fetchedOrder);
-            setIsMobileDrawerOpen(true);
-
-            // Add to orders list so it appears in the active order list
-            setOrders((prev) => {
-              if (prev.some((o) => o._id === fetchedOrder._id)) return prev;
-              return [fetchedOrder, ...prev];
-            });
-          } else {
+        if (isCancelled || !fetchedOrder) {
+          if (!isCancelled) {
             addToast("Order not found or inaccessible.", "error");
           }
-        } catch (err: any) {
-          if (!isCancelled) {
-            console.warn("Could not fetch order from orderId query param:", err);
-            addToast(err.message || "Failed to load order specified in URL", "error");
-          }
+          return;
         }
-      };
 
-      loadOrderFromParam();
+        // Tenancy validation: ensure order belongs to authenticated user's restaurant
+        const orderRestId =
+          typeof fetchedOrder.restaurantId === "object" && fetchedOrder.restaurantId !== null
+            ? (fetchedOrder.restaurantId as any)._id
+            : fetchedOrder.restaurantId;
 
-      return () => {
-        isCancelled = true;
-      };
-    }
-  }, [authLoading, user, orderIdParam, orders, selectedOrder, canAccessPOS, addToast]);
+        if (user.restaurantId && orderRestId && String(user.restaurantId) !== String(orderRestId)) {
+          addToast("Forbidden: You do not have permission to view orders from another restaurant.", "error");
+          return;
+        }
+
+        // Order eligibility check
+        if (fetchedOrder.status === "CANCELLED") {
+          addToast("Cannot open billing for a cancelled order.", "error");
+          return;
+        }
+
+        processedHandoffRef.current = trimmedOrderId;
+        setSelectedOrder(fetchedOrder);
+        setIsMobileDrawerOpen(true);
+
+        // Add to orders list so it appears in the active order list
+        setOrders((prev) => {
+          if (prev.some((o) => o._id === fetchedOrder!._id)) return prev;
+          return [fetchedOrder!, ...prev];
+        });
+      } catch (err: any) {
+        if (!isCancelled) {
+          console.warn("Could not fetch order from orderId query param:", err);
+          addToast(err.message || "Failed to load order specified in URL", "error");
+        }
+      }
+    };
+
+    loadOrderFromParam();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [authLoading, user, orderIdParam, handoffTokenParam, orders, selectedOrder, canAccessPOS, addToast]);
 
   if (authLoading) {
     return (
