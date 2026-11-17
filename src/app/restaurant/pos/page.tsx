@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../../context/AuthContext";
 import { POSProvider, usePOS } from "../../../context/POSContext";
@@ -36,6 +36,8 @@ import {
 
 function POSBillingContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const orderIdParam = searchParams.get("orderId");
   const { user, loading: authLoading, hasPermission } = useAuth();
   const { addToast } = usePOS();
 
@@ -183,12 +185,99 @@ function POSBillingContent() {
     };
   }, [fetchBillRequests, addToast]);
 
-  // Protected route check
+  const canAccessPOS =
+    user?.role === "SUPER_ADMIN" ||
+    user?.role === "ADMIN" ||
+    user?.role === "MANAGER" ||
+    user?.role === "CASHIER" ||
+    hasPermission("billing:create") ||
+    hasPermission("orders:create") ||
+    hasPermission("billing:view");
+
+  // Protected route check with return redirect URL
   useEffect(() => {
     if (!authLoading && !user) {
-      router.push("/login");
+      const currentQuery = typeof window !== "undefined" ? window.location.search : "";
+      const redirectTarget = `/restaurant/pos${currentQuery}`;
+      router.push(`/login?redirect=${encodeURIComponent(redirectTarget)}`);
     }
   }, [authLoading, user, router]);
+
+  // Auto-select order when orderId is provided in URL query parameter (Direct handoff from Waiter App)
+  useEffect(() => {
+    if (!authLoading && user && orderIdParam) {
+      // 1. Check if order is already present in loaded orders
+      const existing = orders.find((o) => o._id === orderIdParam);
+      if (existing) {
+        if (!selectedOrder || selectedOrder._id !== existing._id) {
+          setSelectedOrder(existing);
+          setIsMobileDrawerOpen(true);
+        }
+        return;
+      }
+
+      // 2. Otherwise fetch the specific order from backend
+      let isCancelled = false;
+      const loadOrderFromParam = async () => {
+        try {
+          const res = await apiClient.get<{ success: boolean; data: any }>(
+            `/restaurant/orders/${orderIdParam}`
+          );
+
+          if (isCancelled) return;
+
+          if (res.success && res.data) {
+            const fetchedOrder: BillRequestOrder = res.data;
+
+            // Tenancy validation: ensure order belongs to user's restaurant
+            const orderRestId =
+              typeof fetchedOrder.restaurantId === "object" && fetchedOrder.restaurantId !== null
+                ? (fetchedOrder.restaurantId as any)._id
+                : fetchedOrder.restaurantId;
+
+            if (user.restaurantId && orderRestId && String(user.restaurantId) !== String(orderRestId)) {
+              addToast("You do not have permission to view orders from another restaurant.", "error");
+              return;
+            }
+
+            // Billing permission check
+            if (!canAccessPOS) {
+              addToast("You do not have permission to access billing.", "error");
+              return;
+            }
+
+            // Eligibility check
+            if (fetchedOrder.status === "CANCELLED") {
+              addToast("Cannot open billing for a cancelled order.", "error");
+              return;
+            }
+
+            setSelectedOrder(fetchedOrder);
+            setIsMobileDrawerOpen(true);
+
+            // Add to orders list so it appears in the active order list
+            setOrders((prev) => {
+              if (prev.some((o) => o._id === fetchedOrder._id)) return prev;
+              return [fetchedOrder, ...prev];
+            });
+          } else {
+            addToast("Order not found or inaccessible.", "error");
+          }
+        } catch (err: any) {
+          if (!isCancelled) {
+            console.warn("Could not fetch order from orderId query param:", err);
+            addToast(err.message || "Failed to load order specified in URL", "error");
+          }
+        }
+      };
+
+      loadOrderFromParam();
+
+      return () => {
+        isCancelled = true;
+      };
+    }
+  }, [authLoading, user, orderIdParam, orders, selectedOrder, canAccessPOS, addToast]);
 
   if (authLoading) {
     return (
@@ -200,15 +289,6 @@ function POSBillingContent() {
   }
 
   if (!user) return null;
-
-  const canAccessPOS =
-    user.role === "SUPER_ADMIN" ||
-    user.role === "ADMIN" ||
-    user.role === "MANAGER" ||
-    user.role === "CASHIER" ||
-    hasPermission("billing:create") ||
-    hasPermission("orders:create") ||
-    hasPermission("billing:view");
 
   if (!canAccessPOS) {
     return (
@@ -252,21 +332,56 @@ function POSBillingContent() {
   ): Promise<Invoice | null> => {
     setIsConfirming(true);
     try {
-      const res = await apiClient.post<{
-        success: boolean;
-        message?: string;
-        invoice?: Invoice;
-        data?: BillRequestOrder;
-      }>(`/restaurant/orders/${orderId}/bill-request/confirm`, billingOptions);
+      let invoice: Invoice | null = null;
 
-      if (res.success && res.invoice) {
-        soundService.playFoodReady().catch(() => {});
-        addToast(`Bill confirmed! Invoice #${res.invoice.invoiceNumber} generated.`, "success");
-        await fetchBillRequests();
-        return res.invoice;
+      // If order has an active bill request, confirm it via bill-request/confirm
+      if (selectedOrder?.billRequest?.status === "REQUESTED") {
+        const res = await apiClient.post<{
+          success: boolean;
+          message?: string;
+          invoice?: Invoice;
+          data?: BillRequestOrder;
+        }>(`/restaurant/orders/${orderId}/bill-request/confirm`, billingOptions);
+
+        if (res.success && res.invoice) {
+          invoice = res.invoice;
+        } else {
+          throw new Error(res.message || "Failed to confirm bill");
+        }
       } else {
-        throw new Error(res.message || "Failed to confirm bill");
+        // Direct invoice generation without prior bill request approval
+        const res = await apiClient.post<{
+          success: boolean;
+          message?: string;
+          data?: Invoice;
+        }>(`/restaurant/billing/invoices`, {
+          orderId,
+          discount: billingOptions.discount,
+          serviceCharge: billingOptions.serviceCharge,
+          customerSnapshot:
+            billingOptions.customerName || billingOptions.customerPhone
+              ? {
+                  name: billingOptions.customerName || "Guest",
+                  phone: billingOptions.customerPhone || undefined,
+                }
+              : undefined,
+          idempotencyKey: `inv-direct-${orderId}`,
+        });
+
+        if (res.success && res.data) {
+          invoice = res.data;
+        } else {
+          throw new Error(res.message || "Failed to generate invoice");
+        }
       }
+
+      if (invoice) {
+        soundService.playFoodReady().catch(() => {});
+        addToast(`Bill confirmed! Invoice #${invoice.invoiceNumber} generated.`, "success");
+        await fetchBillRequests();
+        return invoice;
+      }
+      return null;
     } catch (err: any) {
       addToast(err.message || "Failed to confirm bill", "error");
       return null;
@@ -819,7 +934,16 @@ function POSBillingContent() {
 export default function POSPage() {
   return (
     <POSProvider>
-      <POSBillingContent />
+      <React.Suspense
+        fallback={
+          <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-50 text-slate-600 gap-3">
+            <div className="w-10 h-10 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs font-semibold">Loading POS Terminal...</span>
+          </div>
+        }
+      >
+        <POSBillingContent />
+      </React.Suspense>
     </POSProvider>
   );
 }
