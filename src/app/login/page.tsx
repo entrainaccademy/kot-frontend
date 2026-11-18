@@ -31,18 +31,8 @@ function LoginContent() {
     try {
       const res = await login(email.trim(), password);
       if (res.success) {
-        // Check if there is a redirect URL specified (e.g. from Waiter App billing handoff)
-        const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
-        const redirectTarget = params.get("redirect");
-
-        if (
-          redirectTarget &&
-          redirectTarget.startsWith("/") &&
-          !redirectTarget.startsWith("//") &&
-          !redirectTarget.includes(":")
-        ) {
-          window.location.href = redirectTarget;
-        } else if (res.user?.role === "SUPER_ADMIN") {
+        // Role-based routing: Super Admin to platform admin dashboard, others to restaurant
+        if (res.user?.role === "SUPER_ADMIN") {
           window.location.href = "/admin/dashboard";
         } else if (res.user?.role === "ADMIN" || res.user?.role === "MANAGER") {
           window.location.href = "/restaurant/dashboard";

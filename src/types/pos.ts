@@ -180,6 +180,7 @@ export type BillRequestStatus = "NOT_REQUESTED" | "REQUESTED" | "CONFIRMED" | "C
 
 export interface BillRequestItem {
   _id?: string;
+  menuItemId?: string | { _id: string; name?: string; price?: number };
   name: string;
   quantity: number;
   price: number;

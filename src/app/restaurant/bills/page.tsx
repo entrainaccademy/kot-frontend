@@ -29,15 +29,21 @@ import {
   Loader2,
   Filter,
   Eye,
+  ShoppingBag,
 } from "lucide-react";
 import { BillRequestOrder } from "../../../types/pos";
 
 export default function BillsPage() {
   const { user } = useAuth();
+  const [mounted, setMounted] = useState<boolean>(false);
   const [orders, setOrders] = useState<BillRequestOrder[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Review Modal State ("View Bill / Generate Bill")
   const [reviewOrder, setReviewOrder] = useState<BillRequestOrder | null>(null);
@@ -313,13 +319,13 @@ export default function BillsPage() {
               <h1 className="text-sm sm:text-base font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
                 <span>Bill Requests & Invoices</span>
                 {pendingCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white animate-pulse shadow-xs">
-                    {pendingCount} Pending
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-xs">
+                    {pendingCount} Ready
                   </span>
                 )}
               </h1>
-              <p className="text-[11px] text-slate-500 hidden sm:block">
-                {user?.restaurantName || "Cobolt Kitchen & Bar"} • Staff Waiter Bill Confirmation Workflow
+              <p suppressHydrationWarning className="text-[11px] text-slate-500 hidden sm:block">
+                {(mounted && user?.restaurantName) || "Cobolt Kitchen & Bar"} • Staff Waiter Bill Requests
               </p>
             </div>
           </div>
@@ -351,12 +357,12 @@ export default function BillsPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-2xs flex items-center justify-between">
               <div>
-                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Pending Confirmation</p>
-                <p className="text-xl font-black text-amber-600 mt-0.5">{pendingCount}</p>
-                <p className="text-[10px] text-slate-400 mt-0.5">Awaiting cashier authorization</p>
+                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Ready Bills</p>
+                <p className="text-xl font-black text-emerald-600 mt-0.5">{pendingCount}</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Bill requests ready for checkout</p>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
-                <Clock className="w-5 h-5" />
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600">
+                <CheckCircle2 className="w-5 h-5" />
               </div>
             </div>
 
@@ -393,19 +399,23 @@ export default function BillsPage() {
                 onClick={() => setStatusFilter("REQUESTED")}
                 className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
                   statusFilter === "REQUESTED"
-                    ? "bg-amber-500 text-white shadow-xs"
+                    ? "bg-emerald-600 text-white shadow-xs"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
-                <span>Pending Requests</span>
-                {pendingCount > 0 && <span className="ml-1.5 px-1.5 py-0.2 rounded-full text-[10px] bg-white text-amber-700 font-extrabold">{pendingCount}</span>}
+                <span>Ready Bills</span>
+                {pendingCount > 0 && (
+                  <span className="ml-1.5 px-1.5 py-0.2 rounded-full text-[10px] bg-white text-emerald-700 font-extrabold">
+                    {pendingCount}
+                  </span>
+                )}
               </button>
 
               <button
                 onClick={() => setStatusFilter("CONFIRMED")}
                 className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
                   statusFilter === "CONFIRMED"
-                    ? "bg-emerald-600 text-white shadow-xs"
+                    ? "bg-teal-700 text-white shadow-xs"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
@@ -416,7 +426,7 @@ export default function BillsPage() {
                 onClick={() => setStatusFilter("ALL")}
                 className={`py-1.5 px-3 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
                   statusFilter === "ALL"
-                    ? "bg-teal-700 text-white shadow-xs"
+                    ? "bg-slate-800 text-white shadow-xs"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
@@ -473,255 +483,216 @@ export default function BillsPage() {
               </div>
               <h3 className="text-base font-extrabold text-slate-800">No Bill Requests in this Queue</h3>
               <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-                When waiters click &quot;Request Bill / Generate Invoice&quot; in the Staff Mobile PWA, the requests will appear here for cashier confirmation.
+                When waiters click &quot;Request Bill&quot; in the Staff Mobile PWA, ready bill requests will appear here.
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {orders.map((order) => {
-                const billStatus = order.billRequest?.status || "NOT_REQUESTED";
-                const isRequested = billStatus === "REQUESTED";
-                const isConfirmed = billStatus === "CONFIRMED";
-                const isCancelled = billStatus === "CANCELLED";
-                const isConfirming = confirmingId === order._id;
-                const isCancelling = cancellingId === order._id;
+            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs min-w-[760px]">
+                  <thead className="bg-slate-50/80 border-b border-slate-200/80 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                    <tr>
+                      <th className="py-3.5 px-4">Order # & Time</th>
+                      <th className="py-3.5 px-4">Table / Service</th>
+                      <th className="py-3.5 px-4">Requested By</th>
+                      <th className="py-3.5 px-4">Items</th>
+                      <th className="py-3.5 px-4 text-right">Amount</th>
+                      <th className="py-3.5 px-4 text-center">Status</th>
+                      <th className="py-3.5 px-4 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {orders.map((order) => {
+                      const billStatus = order.billRequest?.status || "NOT_REQUESTED";
+                      const isRequested = billStatus === "REQUESTED";
+                      const isConfirmed = billStatus === "CONFIRMED";
+                      const isCancelled = billStatus === "CANCELLED";
 
-                const tableLabel = order.tableId?.tableNumber
-                  ? `Table ${order.tableId.tableNumber}${order.tableId.floor ? ` (${order.tableId.floor})` : ""}`
-                  : order.billRequest?.tableNumber
-                  ? `Table ${order.billRequest.tableNumber}`
-                  : order.orderType;
+                      const tableLabel = order.tableId?.tableNumber
+                        ? `Table ${order.tableId.tableNumber}${order.tableId.floor ? ` (${order.tableId.floor})` : ""}`
+                        : order.billRequest?.tableNumber
+                        ? `Table ${order.billRequest.tableNumber}`
+                        : order.orderType;
 
-                return (
-                  <div
-                    key={order._id}
-                    className={`rounded-2xl border transition-all flex flex-col justify-between overflow-hidden ${
-                      isRequested
-                        ? "bg-white border-amber-300 ring-1 ring-amber-300/40 shadow-sm"
-                        : isConfirmed
-                        ? "bg-white border-emerald-300/80 shadow-2xs"
-                        : "bg-slate-50/80 border-slate-200 opacity-80"
-                    }`}
-                  >
-                    {/* Top Status Accent Bar */}
-                    <div
-                      className={`h-1.5 w-full ${
-                        isRequested
-                          ? "bg-amber-500 animate-pulse"
-                          : isConfirmed
-                          ? "bg-emerald-500"
-                          : "bg-slate-300"
-                      }`}
-                    />
-
-                    <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-                      <div>
-                        {/* Header: Order #, Table & Status */}
-                        <div className="flex items-start justify-between border-b border-slate-100 pb-2.5">
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-mono font-black text-sm text-slate-900 tracking-tight">
-                                {order.orderNumber}
-                              </span>
-                              <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200 flex items-center gap-1">
-                                <Clock className="w-3 h-3 text-slate-400" />
-                                <span>{getElapsedTime(order.billRequest?.requestedAt || order.createdAt)}</span>
-                              </span>
+                      return (
+                        <tr
+                          key={order._id}
+                          className="hover:bg-slate-50/80 transition-colors group"
+                        >
+                          {/* Order # & Time */}
+                          <td className="py-3.5 px-4 align-top">
+                            <div className="font-mono font-black text-slate-900 text-xs tracking-tight">
+                              {order.orderNumber}
                             </div>
+                            <div className="text-[11px] font-medium text-slate-400 flex items-center gap-1 mt-1">
+                              <Clock className="w-3 h-3 text-slate-400" />
+                              <span suppressHydrationWarning>{getElapsedTime(order.billRequest?.requestedAt || order.createdAt)}</span>
+                            </div>
+                          </td>
 
-                            <div className="mt-1 flex items-center gap-1.5">
-                              <span className="text-xs font-extrabold px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 text-teal-800">
-                                {tableLabel}
-                              </span>
-                              <span className="text-[10px] font-bold text-slate-500 uppercase px-1.5 py-0.5 rounded bg-slate-100">
+                          {/* Table / Service */}
+                          <td className="py-3.5 px-4 align-top">
+                            <div className="flex flex-col gap-1 items-start">
+                              {order.orderType === "DINE_IN" ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-teal-50 border border-teal-200/80 text-teal-800 text-xs font-extrabold shadow-2xs">
+                                  <Utensils className="w-3.5 h-3.5 text-teal-600" />
+                                  <span>{tableLabel}</span>
+                                </span>
+                              ) : order.orderType === "TAKEAWAY" ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200/80 text-amber-800 text-xs font-bold shadow-2xs">
+                                  <ShoppingBag className="w-3.5 h-3.5 text-amber-600" />
+                                  <span>Takeaway</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200/80 text-indigo-800 text-xs font-bold shadow-2xs">
+                                  <span>{order.orderType}</span>
+                                </span>
+                              )}
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-1">
                                 {order.orderType}
                               </span>
                             </div>
-                          </div>
+                          </td>
 
-                          {/* Status Badge */}
-                          <div>
-                            {isRequested && (
-                              <span className="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300 animate-pulse flex items-center gap-1">
-                                <Clock className="w-3 h-3" />
-                                <span>Pending Approval</span>
+                          {/* Requested By */}
+                          <td className="py-3.5 px-4 align-top">
+                            <div className="flex items-center gap-2 text-xs">
+                              <div className="w-7 h-7 rounded-lg bg-teal-50 border border-teal-200/60 flex items-center justify-center text-teal-700 shrink-0">
+                                <User className="w-3.5 h-3.5" />
+                              </div>
+                              <div>
+                                <span className="font-bold text-slate-800 block text-xs">
+                                  {order.billRequest?.requestedBy?.name || "Staff"}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                                  {order.billRequest?.requestedBy?.role || "WAITER"}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Items Summary */}
+                          <td className="py-3.5 px-4 align-top max-w-xs">
+                            <div className="space-y-1">
+                              {order.items.slice(0, 3).map((item, idx) => (
+                                <div key={idx} className="flex items-baseline gap-1.5 text-xs text-slate-700 truncate">
+                                  <span className="font-black text-[10px] text-teal-800 bg-teal-50 border border-teal-200/60 px-1 rounded shrink-0">
+                                    {item.quantity}x
+                                  </span>
+                                  <span className="font-semibold truncate text-slate-800">
+                                    {item.name}
+                                  </span>
+                                  {item.notes && (
+                                    <span className="text-[10px] text-amber-700 italic truncate">
+                                      ({item.notes})
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                              {order.items.length > 3 && (
+                                <span className="text-[10px] text-slate-400 font-semibold italic block">
+                                  +{order.items.length - 3} more items
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Total Amount */}
+                          <td className="py-3.5 px-4 align-top text-right">
+                            <div className="font-mono font-black text-slate-900 text-sm">
+                              ₹{order.grandTotal.toFixed(2)}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                              Sub: ₹{order.subtotal.toFixed(2)} • GST: ₹{order.tax.toFixed(2)}
+                            </div>
+                          </td>
+
+                          {/* Status */}
+                          <td className="py-3.5 px-4 align-top text-center">
+                            {isRequested ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                <span>Ready</span>
                               </span>
-                            )}
-                            {isConfirmed && (
-                              <span className="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
-                                <CheckCircle2 className="w-3 h-3" />
-                                <span>Confirmed</span>
+                            ) : isConfirmed ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200 shadow-2xs">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" />
+                                <span>Billed</span>
                               </span>
-                            )}
-                            {isCancelled && (
-                              <span className="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-300 flex items-center gap-1">
-                                <XCircle className="w-3 h-3" />
+                            ) : isCancelled ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200 shadow-2xs">
+                                <XCircle className="w-3.5 h-3.5 text-slate-400" />
                                 <span>Cancelled</span>
                               </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                <span>Ready</span>
+                              </span>
                             )}
-                          </div>
-                        </div>
+                          </td>
 
-                        {/* Requester Info */}
-                        <div className="mt-2 text-[11px] text-slate-600 flex items-center gap-1.5 bg-slate-50 p-2 rounded-xl border border-slate-200/60">
-                          <User className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                          <span className="truncate">
-                            Requested by:{" "}
-                            <strong className="text-slate-800">
-                              {order.billRequest?.requestedBy?.name || "Staff"}
-                            </strong>{" "}
-                            ({order.billRequest?.requestedBy?.role || "WAITER"})
-                          </span>
-                        </div>
+                          {/* Actions */}
+                          <td className="py-3.5 px-4 align-top text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => {
+                                  setReviewOrder(order);
+                                  setIsReviewModalOpen(true);
+                                }}
+                                className="py-1.5 px-3 rounded-xl border border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-800 text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer hover:shadow-xs"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-teal-700" />
+                                <span>View Bill</span>
+                              </button>
 
-                        {/* Items List */}
-                        <div className="mt-2.5 space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                          {order.items.map((item, idx) => (
-                            <div
-                              key={idx}
-                              className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-slate-50/80 border border-slate-200/50"
-                            >
-                              <div className="flex items-baseline gap-1.5 truncate pr-2">
-                                <span className="font-black text-[11px] text-teal-800 bg-teal-100 px-1 rounded shrink-0">
-                                  {item.quantity}x
-                                </span>
-                                <span className="font-semibold text-slate-800 truncate">
-                                  {item.name}
-                                </span>
-                                {item.notes && (
-                                  <span className="text-[10px] text-amber-700 italic truncate">
-                                    ({item.notes})
-                                  </span>
-                                )}
-                              </div>
-                              <span className="font-mono font-bold text-slate-700 shrink-0">
-                                ₹{item.itemTotal.toFixed(2)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
+                              {isConfirmed && (
+                                <>
+                                  <button
+                                    onClick={() => openReceiptModal(order)}
+                                    className="py-1.5 px-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold inline-flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                                    title="Print Thermal Receipt"
+                                  >
+                                    <Printer className="w-3.5 h-3.5 text-slate-600" />
+                                    <span>Print</span>
+                                  </button>
 
-                        {/* Price Breakdown */}
-                        <div className="mt-3 pt-2.5 border-t border-slate-200/70 space-y-1 text-xs">
-                          <div className="flex justify-between text-slate-500">
-                            <span>Subtotal:</span>
-                            <span className="font-mono">₹{order.subtotal.toFixed(2)}</span>
-                          </div>
-                          {order.discount > 0 && (
-                            <div className="flex justify-between text-emerald-600 font-semibold">
-                              <span>Discount:</span>
-                              <span className="font-mono">-₹{order.discount.toFixed(2)}</span>
-                            </div>
-                          )}
-                          <div className="flex justify-between text-slate-500">
-                            <span>Taxes (GST):</span>
-                            <span className="font-mono">₹{order.tax.toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between text-sm font-extrabold text-slate-900 pt-1 border-t border-dashed border-slate-200">
-                            <span>Grand Total:</span>
-                            <span className="font-mono text-teal-700 text-base">₹{order.grandTotal.toFixed(2)}</span>
-                          </div>
-                        </div>
+                                  <button
+                                    onClick={() => handleDownloadPdf(order)}
+                                    disabled={downloadingPdfId === order._id}
+                                    className="p-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-all cursor-pointer disabled:opacity-50"
+                                    title="Download A4 PDF"
+                                  >
+                                    {downloadingPdfId === order._id ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <Download className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
 
-                        {/* Confirmed Invoice Info Banner */}
-                        {isConfirmed && order.billRequest?.invoiceId && (
-                          <div className="mt-3 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 space-y-1 text-xs">
-                            <div className="flex items-center justify-between font-bold text-emerald-900">
-                              <span>Invoice Generated:</span>
-                              <span className="font-mono">{order.billRequest.invoiceId.invoiceNumber}</span>
-                            </div>
-                            <div className="flex items-center justify-between text-[11px] text-emerald-700">
-                              <span>Payment Status:</span>
-                              <span className="font-extrabold uppercase">
-                                {order.billRequest.invoiceId.paymentStatus || "UNPAID"}
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Footer Actions */}
-                      <div className="pt-2 border-t border-slate-100 space-y-2">
-                        {isRequested && (
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => {
-                                setReviewOrder(order);
-                                setIsReviewModalOpen(true);
-                              }}
-                              className="flex-1 py-2 px-3 rounded-xl border border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-800 text-xs font-bold flex items-center justify-center gap-1.5 shadow-2xs transition-all cursor-pointer min-h-[36px]"
-                            >
-                              <Eye className="w-3.5 h-3.5 text-teal-700" />
-                              <span>View Bill</span>
-                            </button>
-
-                            <button
-                              onClick={() => handleConfirmBill(order)}
-                              disabled={isConfirming || isCancelling}
-                              className="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white text-xs font-black flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-50 min-h-[36px]"
-                            >
-                              {isConfirming ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <Check className="w-4 h-4" />
+                                  <Link
+                                    href="/restaurant/pos"
+                                    className="py-1.5 px-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold inline-flex items-center gap-1 shadow-xs transition-all"
+                                  >
+                                    <span>Settle</span>
+                                    <ArrowRight className="w-3 h-3" />
+                                  </Link>
+                                </>
                               )}
-                              <span>Confirm Bill</span>
-                            </button>
-
-                            <button
-                              onClick={() => handleCancelRequest(order)}
-                              disabled={isConfirming || isCancelling}
-                              className="py-2 px-2.5 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold transition-all cursor-pointer disabled:opacity-50 min-h-[36px]"
-                              title="Cancel this request"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        )}
-
-                        {isConfirmed && (
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => openReceiptModal(order)}
-                              className="flex-1 py-1.5 px-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 shadow-2xs transition-all cursor-pointer min-h-[34px]"
-                            >
-                              <Printer className="w-3.5 h-3.5 text-slate-600" />
-                              <span>Print Receipt</span>
-                            </button>
-
-                            <button
-                              onClick={() => handleDownloadPdf(order)}
-                              disabled={downloadingPdfId === order._id}
-                              className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-all cursor-pointer disabled:opacity-50 min-h-[34px]"
-                              title="Download A4 PDF"
-                            >
-                              {downloadingPdfId === order._id ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <Download className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-
-                            <Link
-                              href="/restaurant/pos"
-                              className="py-1.5 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold flex items-center gap-1 shadow-xs transition-all min-h-[34px]"
-                            >
-                              <span>Settle</span>
-                              <ArrowRight className="w-3 h-3" />
-                            </Link>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
       </main>
 
-      {/* Bill Review & Confirmation Modal */}
+      {/* Bill Review Modal */}
       <BillReviewModal
         isOpen={isReviewModalOpen}
         order={reviewOrder}
@@ -730,7 +701,6 @@ export default function BillsPage() {
           await handleConfirmBill(order);
           setIsReviewModalOpen(false);
         }}
-        onCancelRequest={handleCancelRequest}
         onPrintReceipt={openReceiptModal}
         onDownloadPdf={handleDownloadPdf}
         onSettlePayment={() => {

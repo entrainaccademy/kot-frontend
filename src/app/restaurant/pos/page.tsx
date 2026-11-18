@@ -1,13 +1,14 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import React, { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../../context/AuthContext";
 import { POSProvider, usePOS } from "../../../context/POSContext";
 import { POSSidebar } from "../../../components/pos/POSSidebar";
 import { BillingSidebar } from "../../../components/pos/BillingSidebar";
 import { SimpleBillReceiptModal } from "../../../components/pos/SimpleBillReceiptModal";
+import { MergeBillsModal } from "../../../components/pos/MergeBillsModal";
 import { ToastContainer } from "../../../components/pos/Toast";
 import { SoundControl } from "../../../components/common/SoundControl";
 import { apiClient } from "../../../lib/apiClient";
@@ -32,14 +33,11 @@ import {
   ChevronRight,
   Printer,
   Sparkles,
+  Layers,
 } from "lucide-react";
 
 function POSBillingContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const orderIdParam = searchParams.get("orderId");
-  const handoffTokenParam = searchParams.get("handoffToken") || searchParams.get("token");
-  const processedHandoffRef = useRef<string | null>(null);
   const { user, loading: authLoading, hasPermission } = useAuth();
   const { addToast } = usePOS();
 
@@ -62,8 +60,10 @@ function POSBillingContent() {
   const [printInvoice, setPrintInvoice] = useState<Invoice | null>(null);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState<boolean>(false);
 
-  // Filter & Search states
-  const [statusFilter, setStatusFilter] = useState<"REQUESTED" | "CONFIRMED" | "ALL">("REQUESTED");
+  // Merge Table Bills Modal state
+  const [isMergeModalOpen, setIsMergeModalOpen] = useState<boolean>(false);
+
+  // Search state
   const [searchTerm, setSearchTerm] = useState<string>("");
 
   // Live Clock
@@ -100,47 +100,56 @@ function POSBillingContent() {
     }
   }, []);
 
-  // Fetch Bill Requests from shared backend
-  const fetchBillRequests = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, string> = {};
-      if (statusFilter !== "ALL") {
-        params.status = statusFilter;
-      } else {
-        params.status = "ALL";
-      }
-      if (searchTerm.trim()) {
-        params.tableNumber = searchTerm.trim();
-      }
-
-      const res = await apiClient.get<{
-        success: boolean;
-        data?: BillRequestOrder[];
-        pendingCount?: number;
-      }>("/restaurant/bill-requests", params);
-
-      if (res.success && Array.isArray(res.data)) {
-        setOrders(res.data);
-        if (typeof res.pendingCount === "number") {
-          setPendingCount(res.pendingCount);
+  // Fetch Bill Requests from shared backend (Active Queue Only)
+  const fetchBillRequests = useCallback(
+    async (isSilent = false) => {
+      if (!isSilent) setLoading(true);
+      try {
+        const params: Record<string, string> = {
+          status: "REQUESTED",
+        };
+        if (searchTerm.trim()) {
+          params.tableNumber = searchTerm.trim();
         }
 
-        // Keep selectedOrder in sync if its status changed
-        if (selectedOrder) {
-          const updatedSelected = res.data.find((o) => o._id === selectedOrder._id);
-          if (updatedSelected) {
-            setSelectedOrder(updatedSelected);
+        const res = await apiClient.get<{
+          success: boolean;
+          data?: BillRequestOrder[];
+          pendingCount?: number;
+        }>("/restaurant/bill-requests", params);
+
+        if (res.success && Array.isArray(res.data)) {
+          setOrders(res.data);
+          if (typeof res.pendingCount === "number") {
+            setPendingCount(res.pendingCount);
           }
+
+          // Keep selectedOrder in sync safely without triggering infinite re-render loops
+          setSelectedOrder((prev) => {
+            if (!prev) return null;
+            const updated = res.data?.find((o) => o._id === prev._id);
+            if (!updated) return prev;
+
+            const isChanged =
+              prev.status !== updated.status ||
+              prev.billRequest?.status !== updated.billRequest?.status ||
+              prev.grandTotal !== updated.grandTotal ||
+              prev.items?.length !== updated.items?.length ||
+              (prev.billRequest?.invoiceId as any)?._id !== (updated.billRequest?.invoiceId as any)?._id ||
+              (prev.billRequest?.invoiceId as any)?.paymentStatus !== (updated.billRequest?.invoiceId as any)?.paymentStatus;
+
+            return isChanged ? updated : prev;
+          });
         }
+      } catch (err: any) {
+        console.warn("Error fetching bill requests in POS:", err);
+        addToast(err.message || "Failed to load bill requests", "error");
+      } finally {
+        setLoading(false);
       }
-    } catch (err: any) {
-      console.warn("Error fetching bill requests in POS:", err);
-      addToast(err.message || "Failed to load bill requests", "error");
-    } finally {
-      setLoading(false);
-    }
-  }, [statusFilter, searchTerm, selectedOrder, addToast]);
+    },
+    [searchTerm, addToast]
+  );
 
   useEffect(() => {
     if (!authLoading && user) {
@@ -157,19 +166,29 @@ function POSBillingContent() {
     const handleBillRequested = () => {
       soundService.playKitchenBell().catch(() => {});
       addToast("🔔 New bill request received from staff!", "info");
-      fetchBillRequests();
+      fetchBillRequests(true);
     };
 
-    const handleBillConfirmed = () => {
-      fetchBillRequests();
+    const handleBillConfirmed = (data?: any) => {
+      const orderId = typeof data === "string" ? data : data?.orderId || data?._id;
+      if (orderId) {
+        setOrders((prev) => prev.filter((o) => o._id !== orderId));
+        setSelectedOrder((prev) => (prev?._id === orderId ? null : prev));
+      }
+      fetchBillRequests(true);
     };
 
-    const handleBillCancelled = () => {
-      fetchBillRequests();
+    const handleBillCancelled = (data?: any) => {
+      const orderId = typeof data === "string" ? data : data?.orderId || data?._id;
+      if (orderId) {
+        setOrders((prev) => prev.filter((o) => o._id !== orderId));
+        setSelectedOrder((prev) => (prev?._id === orderId ? null : prev));
+      }
+      fetchBillRequests(true);
     };
 
     const handlePaymentRecorded = () => {
-      fetchBillRequests();
+      fetchBillRequests(true);
     };
 
     socket.on("bill:requested", handleBillRequested);
@@ -187,144 +206,12 @@ function POSBillingContent() {
     };
   }, [fetchBillRequests, addToast]);
 
-  const canAccessPOS =
-    user?.role === "SUPER_ADMIN" ||
-    user?.role === "ADMIN" ||
-    user?.role === "MANAGER" ||
-    user?.role === "CASHIER" ||
-    hasPermission("billing:create") ||
-    hasPermission("orders:create") ||
-    hasPermission("billing:view");
-
-  // Protected route check with return redirect URL
+  // Protected route check
   useEffect(() => {
     if (!authLoading && !user) {
-      const currentPath = typeof window !== "undefined" ? window.location.pathname : "/restaurant/pos";
-      const currentQuery = typeof window !== "undefined" ? window.location.search : "";
-      const redirectTarget = `${currentPath}${currentQuery}`;
-      router.push(`/login?redirect=${encodeURIComponent(redirectTarget)}`);
+      router.push("/login");
     }
   }, [authLoading, user, router]);
-
-  // Auto-select order when orderId is provided in URL query parameter (Secure handoff from Waiter App)
-  useEffect(() => {
-    if (authLoading || !user || !orderIdParam) return;
-
-    const trimmedOrderId = orderIdParam.trim();
-    if (!trimmedOrderId) return;
-
-    // Check if we already processed this exact order reference to prevent redundant fetches
-    if (processedHandoffRef.current === trimmedOrderId && selectedOrder?._id === trimmedOrderId) {
-      return;
-    }
-
-    // Validate format (Mongo ObjectId 24-hex or orderNumber format ORD-...)
-    const isValidIdFormat =
-      /^[0-9a-fA-F]{24}$/.test(trimmedOrderId) || trimmedOrderId.startsWith("ORD-");
-
-    if (!isValidIdFormat) {
-      addToast("Invalid order reference format in URL.", "error");
-      return;
-    }
-
-    // Role / Permission validation for billing handoff
-    if (!canAccessPOS) {
-      addToast("Access Restricted: You do not have permission to access billing.", "error");
-      return;
-    }
-
-    // 1. Check if order is already present in loaded orders list
-    const existing = orders.find(
-      (o) => o._id === trimmedOrderId || o.orderNumber === trimmedOrderId
-    );
-    if (existing) {
-      processedHandoffRef.current = trimmedOrderId;
-      if (!selectedOrder || selectedOrder._id !== existing._id) {
-        setSelectedOrder(existing);
-        setIsMobileDrawerOpen(true);
-      }
-      return;
-    }
-
-    // 2. Otherwise fetch and validate the specific order from backend
-    let isCancelled = false;
-    const loadOrderFromParam = async () => {
-      try {
-        let fetchedOrder: BillRequestOrder | null = null;
-
-        // If a cryptographically signed handoff token was supplied, verify it with backend
-        if (handoffTokenParam) {
-          try {
-            const verifyRes = await apiClient.post<{ success: boolean; data: any }>(
-              `/restaurant/orders/${trimmedOrderId}/verify-handoff`,
-              { token: handoffTokenParam }
-            );
-            if (verifyRes.success && verifyRes.data) {
-              fetchedOrder = verifyRes.data;
-            }
-          } catch (tokenErr: any) {
-            console.warn("Handoff token verification note:", tokenErr);
-            // Fall back to standard session-authenticated fetch
-          }
-        }
-
-        // Standard session-authenticated fetch if not yet loaded
-        if (!fetchedOrder) {
-          const res = await apiClient.get<{ success: boolean; data: any }>(
-            `/restaurant/orders/${trimmedOrderId}`
-          );
-          if (res.success && res.data) {
-            fetchedOrder = res.data;
-          }
-        }
-
-        if (isCancelled || !fetchedOrder) {
-          if (!isCancelled) {
-            addToast("Order not found or inaccessible.", "error");
-          }
-          return;
-        }
-
-        // Tenancy validation: ensure order belongs to authenticated user's restaurant
-        const orderRestId =
-          typeof fetchedOrder.restaurantId === "object" && fetchedOrder.restaurantId !== null
-            ? (fetchedOrder.restaurantId as any)._id
-            : fetchedOrder.restaurantId;
-
-        if (user.restaurantId && orderRestId && String(user.restaurantId) !== String(orderRestId)) {
-          addToast("Forbidden: You do not have permission to view orders from another restaurant.", "error");
-          return;
-        }
-
-        // Order eligibility check
-        if (fetchedOrder.status === "CANCELLED") {
-          addToast("Cannot open billing for a cancelled order.", "error");
-          return;
-        }
-
-        processedHandoffRef.current = trimmedOrderId;
-        setSelectedOrder(fetchedOrder);
-        setIsMobileDrawerOpen(true);
-
-        // Add to orders list so it appears in the active order list
-        setOrders((prev) => {
-          if (prev.some((o) => o._id === fetchedOrder!._id)) return prev;
-          return [fetchedOrder!, ...prev];
-        });
-      } catch (err: any) {
-        if (!isCancelled) {
-          console.warn("Could not fetch order from orderId query param:", err);
-          addToast(err.message || "Failed to load order specified in URL", "error");
-        }
-      }
-    };
-
-    loadOrderFromParam();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [authLoading, user, orderIdParam, handoffTokenParam, orders, selectedOrder, canAccessPOS, addToast]);
 
   if (authLoading) {
     return (
@@ -336,6 +223,15 @@ function POSBillingContent() {
   }
 
   if (!user) return null;
+
+  const canAccessPOS =
+    user.role === "SUPER_ADMIN" ||
+    user.role === "ADMIN" ||
+    user.role === "MANAGER" ||
+    user.role === "CASHIER" ||
+    hasPermission("billing:create") ||
+    hasPermission("orders:create") ||
+    hasPermission("billing:view");
 
   if (!canAccessPOS) {
     return (
@@ -379,56 +275,38 @@ function POSBillingContent() {
   ): Promise<Invoice | null> => {
     setIsConfirming(true);
     try {
-      let invoice: Invoice | null = null;
+      const res = await apiClient.post<{
+        success: boolean;
+        message?: string;
+        invoice?: Invoice;
+        data?: BillRequestOrder;
+      }>(`/restaurant/orders/${orderId}/bill-request/confirm`, billingOptions);
 
-      // If order has an active bill request, confirm it via bill-request/confirm
-      if (selectedOrder?.billRequest?.status === "REQUESTED") {
-        const res = await apiClient.post<{
-          success: boolean;
-          message?: string;
-          invoice?: Invoice;
-          data?: BillRequestOrder;
-        }>(`/restaurant/orders/${orderId}/bill-request/confirm`, billingOptions);
-
-        if (res.success && res.invoice) {
-          invoice = res.invoice;
-        } else {
-          throw new Error(res.message || "Failed to confirm bill");
-        }
-      } else {
-        // Direct invoice generation without prior bill request approval
-        const res = await apiClient.post<{
-          success: boolean;
-          message?: string;
-          data?: Invoice;
-        }>(`/restaurant/billing/invoices`, {
-          orderId,
-          discount: billingOptions.discount,
-          serviceCharge: billingOptions.serviceCharge,
-          customerSnapshot:
-            billingOptions.customerName || billingOptions.customerPhone
-              ? {
-                  name: billingOptions.customerName || "Guest",
-                  phone: billingOptions.customerPhone || undefined,
-                }
-              : undefined,
-          idempotencyKey: `inv-direct-${orderId}`,
-        });
-
-        if (res.success && res.data) {
-          invoice = res.data;
-        } else {
-          throw new Error(res.message || "Failed to generate invoice");
-        }
-      }
-
-      if (invoice) {
+      if (res.success && res.invoice) {
         soundService.playFoodReady().catch(() => {});
-        addToast(`Bill confirmed! Invoice #${invoice.invoiceNumber} generated.`, "success");
-        await fetchBillRequests();
-        return invoice;
+        addToast(`Bill confirmed! Invoice #${res.invoice.invoiceNumber} generated.`, "success");
+
+        // Open Simple Thermal Print Receipt for the newly confirmed invoice
+        const confirmedOrder = res.data || {
+          ...selectedOrder,
+          _id: orderId,
+          billRequest: {
+            status: "CONFIRMED",
+            invoiceId: res.invoice,
+          },
+        };
+        handleOpenPrintBill(confirmedOrder as BillRequestOrder, res.invoice);
+
+        // Remove confirmed bill from /restaurant/pos queue immediately
+        setOrders((prev) => prev.filter((o) => o._id !== orderId));
+        setSelectedOrder(null);
+        setIsMobileDrawerOpen(false);
+
+        await fetchBillRequests(true);
+        return res.invoice;
+      } else {
+        throw new Error(res.message || "Failed to confirm bill");
       }
-      return null;
     } catch (err: any) {
       addToast(err.message || "Failed to confirm bill", "error");
       return null;
@@ -595,7 +473,7 @@ function POSBillingContent() {
             </div>
 
             <button
-              onClick={fetchBillRequests}
+              onClick={() => fetchBillRequests()}
               disabled={loading}
               title="Refresh Bill Requests"
               className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors disabled:opacity-50 cursor-pointer"
@@ -613,53 +491,35 @@ function POSBillingContent() {
           </div>
         </header>
 
-        {/* Filter Tabs Bar */}
+        {/* Bill Requests Queue Subheader */}
         <div className="px-4 sm:px-6 py-2.5 bg-white border-b border-slate-200/70 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
-            <button
-              onClick={() => setStatusFilter("REQUESTED")}
-              className={`py-1.5 px-3 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                statusFilter === "REQUESTED"
-                  ? "bg-white text-slate-900 shadow-xs font-extrabold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <Clock className="w-3.5 h-3.5 text-amber-500" />
-              <span>Pending Requests</span>
-              {pendingCount > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-amber-500 text-white">
-                  {pendingCount}
-                </span>
-              )}
-            </button>
-
-            <button
-              onClick={() => setStatusFilter("CONFIRMED")}
-              className={`py-1.5 px-3 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                statusFilter === "CONFIRMED"
-                  ? "bg-white text-slate-900 shadow-xs font-extrabold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Confirmed Bills</span>
-            </button>
-
-            <button
-              onClick={() => setStatusFilter("ALL")}
-              className={`py-1.5 px-3 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                statusFilter === "ALL"
-                  ? "bg-white text-slate-900 shadow-xs font-extrabold"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <span>All Requests</span>
-            </button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-extrabold text-slate-800">
+              Active Bill Requests
+            </span>
+            {orders.length > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-600 text-white shadow-xs">
+                {orders.length}
+              </span>
+            )}
           </div>
 
-          <span className="text-[11px] text-slate-500 font-medium hidden sm:inline">
-            Click any bill card or &quot;Select Bill&quot; to open the billing sidebar
-          </span>
+          <div className="flex items-center gap-2">
+            {orders.length >= 2 && (
+              <button
+                onClick={() => setIsMergeModalOpen(true)}
+                className="py-1.5 px-3 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 active:scale-[0.99] text-indigo-700 text-xs font-extrabold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer hover:shadow-xs"
+                title="Combine multiple table bills into one"
+              >
+                <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Merge Table Bills</span>
+              </button>
+            )}
+
+            <span className="text-[11px] text-slate-500 font-medium hidden md:inline">
+              Click any bill card or &quot;Select Bill&quot; to open the billing sidebar
+            </span>
+          </div>
         </div>
 
         {/* 3. Main Content: Bill Requests Grid */}
@@ -694,16 +554,10 @@ function POSBillingContent() {
                 <Receipt className="w-8 h-8" />
               </div>
               <h3 className="text-base font-extrabold text-slate-800">
-                {statusFilter === "REQUESTED"
-                  ? "No Pending Bill Requests"
-                  : statusFilter === "CONFIRMED"
-                  ? "No Confirmed Bills in this Period"
-                  : "No Bill Records Found"}
+                No Active Bill Requests
               </h3>
               <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto leading-relaxed">
-                {statusFilter === "REQUESTED"
-                  ? "When a Waiter / Orderman completes an order and taps 'Request Bill' in the Staff Mobile App, the request appears here instantly."
-                  : "Try clearing search filters or check the All Requests tab."}
+                When a waiter taps &quot;Request Bill&quot; in the Staff Mobile App, incoming bill requests will appear here for checkout.
               </p>
             </div>
           ) : (
@@ -794,24 +648,10 @@ function POSBillingContent() {
 
                           {/* Status Badge */}
                           <div>
-                            {isRequested && (
-                              <span className="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300 animate-pulse flex items-center gap-1">
-                                <Clock className="w-3 h-3" />
-                                <span>Pending</span>
-                              </span>
-                            )}
-                            {isConfirmed && (
-                              <span className="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
-                                <CheckCircle2 className="w-3 h-3" />
-                                <span>Confirmed</span>
-                              </span>
-                            )}
-                            {isCancelled && (
-                              <span className="px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-300 flex items-center gap-1">
-                                <XCircle className="w-3 h-3" />
-                                <span>Cancelled</span>
-                              </span>
-                            )}
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 shadow-2xs">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                              <span>Ready</span>
+                            </span>
                           </div>
                         </div>
 
@@ -965,6 +805,22 @@ function POSBillingContent() {
         </div>
       )}
 
+      {/* Merge Table Bills Modal */}
+      <MergeBillsModal
+        isOpen={isMergeModalOpen}
+        onClose={() => setIsMergeModalOpen(false)}
+        orders={orders}
+        onMergeSuccess={async (mergedOrder) => {
+          addToast(
+            `Table bills merged into ${mergedOrder.orderNumber}!`,
+            "success"
+          );
+          await fetchBillRequests(true);
+          setSelectedOrder(mergedOrder);
+          setIsMobileDrawerOpen(true);
+        }}
+      />
+
       {/* 6. Simple Thermal Bill Receipt Modal (Clean, Minimal, 80mm/58mm/PDF) */}
       <SimpleBillReceiptModal
         isOpen={isReceiptModalOpen}
@@ -981,16 +837,7 @@ function POSBillingContent() {
 export default function POSPage() {
   return (
     <POSProvider>
-      <React.Suspense
-        fallback={
-          <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-50 text-slate-600 gap-3">
-            <div className="w-10 h-10 border-4 border-teal-600 border-t-transparent rounded-full animate-spin" />
-            <span className="text-xs font-semibold">Loading POS Terminal...</span>
-          </div>
-        }
-      >
-        <POSBillingContent />
-      </React.Suspense>
+      <POSBillingContent />
     </POSProvider>
   );
 }

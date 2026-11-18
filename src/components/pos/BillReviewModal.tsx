@@ -104,11 +104,12 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-extrabold text-slate-900 tracking-tight">
-                  Bill Review & Confirmation
+                  Bill Review
                 </h2>
                 {isRequested && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300 animate-pulse">
-                    Pending
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>Ready</span>
                   </span>
                 )}
                 {isConfirmed && (
@@ -298,12 +299,10 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
 
           {/* Guidance note for cashier */}
           {isRequested && (
-            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="p-3 rounded-xl bg-teal-50 border border-teal-200 text-teal-900 text-xs flex items-start gap-2">
+              <Receipt className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
               <div className="text-[11px] leading-relaxed">
-                Confirming this request will generate official invoice{" "}
-                <strong>INV-YYYYMMDD-XXXX</strong>. The order will be billed, and the table
-                will remain assigned until payment is settled.
+                Bill requested from staff. Generating the invoice finalizes the bill and allows printing the receipt or proceeding to settlement.
               </div>
             </div>
           )}
@@ -311,18 +310,8 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
 
         {/* Modal Footer Actions */}
         <div className="p-4 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-          {/* Left: Cancel option for pending requests */}
-          {isRequested && onCancelRequest ? (
-            <button
-              onClick={() => onCancelRequest(order)}
-              disabled={isConfirming}
-              className="py-2 px-3.5 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-            >
-              Cancel Request
-            </button>
-          ) : (
-            <div />
-          )}
+          {/* Left: Spacer */}
+          <div />
 
           {/* Right: Actions */}
           <div className="flex items-center gap-2">
@@ -344,7 +333,7 @@ export const BillReviewModal: React.FC<BillReviewModalProps> = ({
                 ) : (
                   <Check className="w-4 h-4" />
                 )}
-                <span>Confirm & Generate Bill</span>
+                <span>Generate Invoice</span>
               </button>
             )}
 
